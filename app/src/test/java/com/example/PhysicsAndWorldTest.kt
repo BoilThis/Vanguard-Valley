@@ -3,6 +3,7 @@ package com.example
 import com.example.engine.physics.ManifoldScratch
 import com.example.engine.physics.StructuralWorld
 import com.example.engine.physics.VoronoiPolyhedron
+import com.example.engine.sim.DemolitionOpsCatalog
 import com.example.engine.sim.SandboxSimulation
 import com.example.engine.terrain.ChunkedTerrain
 import com.example.model.MaterialTile
@@ -1357,6 +1358,41 @@ class PhysicsAndWorldTest {
         val beforeCheck = sim.world.collapsedCount
         sim.world.checkStabilityAndCollapse(sim.terrain)
         assertEquals("Newly spawned brush structures should not self-collapse", beforeCheck, sim.world.collapsedCount)
+    }
+
+    @Test
+    fun everyDemolitionOpsTargetIsPlacedInTheValley() {
+        val sim = SandboxSimulation(WorldConfig(seed = 4207))
+        val tags = sim.world.blocks.values.mapNotNull { it.targetTag }.toSet()
+        for (mission in DemolitionOpsCatalog.missions) {
+            assertTrue(
+                "No blocks tagged ${mission.targetTag} for ${mission.title}",
+                mission.targetTag in tags
+            )
+        }
+    }
+
+    @Test
+    fun customIntegratorStepsAndFracturesWhenJoltIsDisabled() {
+        val previous = StructuralWorld.allowJoltPhysics
+        StructuralWorld.allowJoltPhysics = false
+        try {
+            val sim = SandboxSimulation(WorldConfig(seed = 4207))
+            assertTrue("Jolt must stay off when allowJoltPhysics is false", !sim.world.isUsingJoltPhysics)
+            val before = sim.world.blocks.size
+            val target = sim.world.blocks.values.first { it.targetTag == "SILO" || it.isFuelExplosive }
+            sim.world.applyExplosion(
+                pos = target.center,
+                radius = 6f,
+                damage = 480f,
+                impulseStrength = 22f,
+                terrain = sim.terrain
+            )
+            repeat(40) { sim.step(0.016f) }
+            assertTrue(sim.world.blocks.size < before || sim.world.shards.isNotEmpty() || sim.world.collapsedCount > 0)
+        } finally {
+            StructuralWorld.allowJoltPhysics = previous
+        }
     }
 
     private fun assertFalseContains(keys: Set<Int>, id: Int) {

@@ -12,10 +12,8 @@
 #   public *;
 #}
 
-# Uncomment this to preserve the line number information for
-# debugging stack traces.
-#-keepattributes SourceFile,LineNumberTable
+-keepattributes SourceFile,LineNumberTable
 
-# If you keep the line number information, uncomment this to
-# hide the original source file name.
-#-renamesourcefileattribute SourceFile
+-keep class com.github.stephengold.joltjni.** { *; }
+-keep class com.example.engine.physics.JoltPhysicsWorld { *; }
+-keep class com.example.engine.physics.JoltRuntime { *; }

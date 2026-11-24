@@ -63,27 +63,50 @@ class SandboxViewModel(application: Application) : AndroidViewModel(application)
             }
         }
 
-        // Fixed ~60Hz physics & simulation loop
+        // Physics stays at ~60Hz. Compose only sees HUD changes, or a 10Hz refresh for
+        // counters (shard count, fps) that would otherwise invalidate the overlay every frame.
         viewModelScope.launch(Dispatchers.Default) {
             var lastNs = System.nanoTime()
+            var lastHudPublishNs = 0L
             while (true) {
                 val now = System.nanoTime()
                 val dt = (now - lastNs) / 1_000_000_000f
                 lastNs = now
 
                 val simHud = simulation.step(dt)
-                _uiState.update { current ->
-                    simHud.copy(
+                val previous = _uiState.value
+                val immediate = hudNeedsImmediatePublish(previous, simHud)
+                if (immediate || now - lastHudPublishNs >= 100_000_000L) {
+                    lastHudPublishNs = now
+                    _uiState.value = simHud.copy(
                         fps = latestFps,
                         audioMuted = soundEngine.isMuted,
-                        missionStars = current.missionStars,
-                        isWorldStudioOpen = current.isWorldStudioOpen,
-                        isOpsDialogOpen = current.isOpsDialogOpen
+                        missionStars = previous.missionStars,
+                        isWorldStudioOpen = previous.isWorldStudioOpen,
+                        isOpsDialogOpen = previous.isOpsDialogOpen
                     )
                 }
                 delay(16L)
             }
         }
+    }
+
+    private fun hudNeedsImmediatePublish(previous: HudUiState, next: HudUiState): Boolean {
+        return previous.currentZone != next.currentZone ||
+            previous.cameraMode != next.cameraMode ||
+            previous.interactionTool != next.interactionTool ||
+            previous.selectedWeapon != next.selectedWeapon ||
+            previous.selectedBrush != next.selectedBrush ||
+            previous.selectedBuildMaterial != next.selectedBuildMaterial ||
+            previous.gameMode != next.gameMode ||
+            previous.activeMission != next.activeMission ||
+            previous.score != next.score ||
+            previous.comboMultiplier != next.comboMultiplier ||
+            previous.ordnanceAmmo != next.ordnanceAmmo ||
+            previous.armedC4Count != next.armedC4Count ||
+            previous.isSprinting != next.isSprinting ||
+            previous.worldConfig != next.worldConfig ||
+            previous.statusBanner != next.statusBanner
     }
 
     fun currentSnapshot(): RenderSnapshot = simulation.latestSnapshot

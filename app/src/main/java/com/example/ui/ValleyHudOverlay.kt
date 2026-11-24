@@ -66,7 +66,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
-import com.example.R
+import com.boilthis.vanguardvalley.R
 import com.example.model.BrushItem
 import com.example.model.BuildMaterial
 import com.example.model.CameraMode

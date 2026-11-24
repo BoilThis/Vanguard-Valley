@@ -13,133 +13,6 @@ import kotlin.math.max
 import kotlin.math.min
 import kotlin.random.Random
 
-data class StructuralBlock(
-    val id: Int,
-    val poly: ConvexPolyhedron,
-    var center: Vec3,
-    var orientation: Quat,
-    val uvOrigin: Vec3,
-    val tileId: Int,
-    val tint: Vec3,
-    var hp: Float,
-    val maxHp: Float,
-    var groundAnchored: Boolean,
-    val supportIds: MutableList<Int>,
-    val isFuelExplosive: Boolean = false,
-    val isCoreSupport: Boolean = false,
-    val targetTag: String? = null,
-    val pointValue: Int = 15,
-    val isHydrant: Boolean = false,
-    val walkable: Boolean = true,
-    val supportGroups: MutableList<MutableList<Int>> = mutableListOf(),
-    var checkCantilever: Boolean = false,
-    val breachDepth: Int = 0,
-    val uvLocalOffset: Vec3 = Vec3.ZERO,
-    var baselineLoad: Float = -1f,
-    var sustainedLoad: Float = 0f,
-    var loadCapacity: Float = -1f
-) {
-    val baseY: Float get() = center.y - poly.halfExtents.y
-}
-
-fun computeInvInertiaLocal(he: Vec3, mass: Float): Vec3 {
-    val hx2 = he.x * he.x
-    val hy2 = he.y * he.y
-    val hz2 = he.z * he.z
-    val factor = mass * (1f / 3f)
-    val ix = max(0.03f, factor * (hy2 + hz2))
-    val iy = max(0.03f, factor * (hx2 + hz2))
-    val iz = max(0.03f, factor * (hx2 + hy2))
-    return Vec3(1f / ix, 1f / iy, 1f / iz)
-}
-
-data class DynamicShard(
-    val id: Int,
-    val poly: ConvexPolyhedron,
-    var center: Vec3,
-    var orientation: Quat,
-    val uvOrigin: Vec3,
-    val tileId: Int,
-    val tint: Vec3,
-    var vel: Vec3,
-    var angVel: Vec3,
-    var sleeping: Boolean = false,
-    var settleTimer: Float = 0f,
-    var age: Float = 0f,
-    var canSecondarySplit: Boolean = true,
-    val restitution: Float = 0.22f,
-    val drag: Float = 1.4f,
-    var supportedByBlockId: Int? = null,
-    var supportedByShardId: Int? = null,
-    var isGroundedContact: Boolean = false,
-    val massEstimate: Float = 1.0f,
-    val uvLocalOffset: Vec3 = Vec3.ZERO,
-    val splitDepth: Int = 0,
-    val boundRadius: Float = poly.boundRadius,
-    val invInertiaLocal: Vec3 = computeInvInertiaLocal(poly.halfExtents, massEstimate),
-    val clusterPieces: List<ClusterPiece>? = null,
-    val clusterStrainBudget: Float = 0f,
-    var lastManifoldCount: Int = 0
-)
-
-data class SecondaryBlastEvent(
-    val pos: Vec3,
-    val radius: Float,
-    val craterDepth: Float,
-    val impulse: Float
-)
-
-data class WaterSplashEvent(
-    val pos: Vec3,
-    val intensity: Float
-)
-
-data class BlockRayHit(
-    val blockId: Int,
-    val hitPoint: Vec3,
-    val hitNormal: Vec3,
-    val distance: Float
-)
-
-data class ShardRayHit(
-    val shardId: Int,
-    val hitPoint: Vec3,
-    val hitNormal: Vec3,
-    val distance: Float
-)
-
-data class KineticImpactResult(
-    val hitAny: Boolean,
-    val bounced: Boolean,
-    val bounceNormal: Vec3,
-    val correctedPos: Vec3?,
-    val secondaryBlasts: List<SecondaryBlastEvent>
-)
-
-data class ExplosionOutcome(
-    val secondaryBlasts: List<SecondaryBlastEvent>,
-    val splashes: List<WaterSplashEvent>,
-    val destroyedCount: Int,
-    val collapsedByCascade: Int,
-    val pointsAwarded: Int,
-    val brokenSounds: Set<MaterialSoundKind>
-)
-
-data class BulletImpactResult(
-    val hitPoint: Vec3?,
-    val hitNormal: Vec3,
-    val hitBlock: Boolean,
-    val tileId: Int,
-    val soundKind: MaterialSoundKind?,
-    val ricochet: Boolean,
-    val blockBroken: Boolean,
-    val collapsedCascade: Int,
-    val pointsAwarded: Int,
-    val secondaryBlasts: List<SecondaryBlastEvent>,
-    val hydrantBurstPos: Vec3?,
-    val hitShard: Boolean = false
-)
-
 class StructuralWorld {
 
     companion object {
@@ -152,6 +25,13 @@ class StructuralWorld {
         const val SECTOR_COUNT = SECTORS_X * SECTORS_Z
         private const val BLOCK_CELL_SIZE = 4.0f
         private const val INV_BLOCK_CELL = 1f / BLOCK_CELL_SIZE
+
+        /**
+         * Tests set this false before constructing a world to force the custom integrator.
+         * Devices on minSdk 30 load Jolt; the custom path remains for a failed native load.
+         */
+        @Volatile
+        var allowJoltPhysics: Boolean = true
     }
 
     val blocks = LinkedHashMap<Int, StructuralBlock>()
@@ -198,7 +78,9 @@ class StructuralWorld {
     private val pendingBlockIds = HashSet<Int>(64)
     private val collapseFailureEvents = ArrayList<CollapseFailureEvent>(32)
     private var loadBaselineVersion = -1
-    private val joltWorld: JoltPhysicsWorld? = if (JoltRuntime.isAvailable) JoltPhysicsWorld() else null
+    private val joltWorld: JoltPhysicsWorld? =
+        if (allowJoltPhysics && JoltRuntime.isAvailable) JoltPhysicsWorld() else null
+    private val bakedDebris = FloatArrayBuilder(16384)
 
     val isUsingJoltPhysics: Boolean get() = joltWorld != null
 
@@ -293,6 +175,7 @@ class StructuralWorld {
         nextId = 1
         collapsedCount = 0
         joltWorld?.clear()
+        bakedDebris.reset()
         for (i in sectorVersions.indices) sectorVersions[i]++
         structureVersion++
         sleepingRubbleVersion++
@@ -1883,12 +1766,18 @@ class StructuralWorld {
         }
     }
 
+    fun appendBakedDebris(out: FloatArrayBuilder) {
+        out.appendFrom(bakedDebris)
+    }
+
     /**
      * Recycles oldest settled tiny ground chips first so airborne debris NEVER freezes in mid-air.
+     * Sleeping pieces are baked into the static rubble mesh instead of disappearing.
      */
     private fun trimShardPoolIfNeeded(incomingSizeHint: Float = 0.5f) {
         val evictedIds = ArrayList<Int>()
-        var sleepingRemoved = false
+        var bakedAny = false
+        if (bakedDebris.size > 120_000) bakedDebris.reset()
         while (shards.size >= MAX_TOTAL_SHARDS) {
             val tinySleepIdx = shards.indexOfFirst { it.sleeping && it.boundRadius < 0.45f }
             val sleepIdx = if (tinySleepIdx >= 0) tinySleepIdx else shards.indexOfFirst { it.sleeping }
@@ -1899,7 +1788,10 @@ class StructuralWorld {
                 if (smallIdx >= 0) smallIdx else 0
             }
             val removed = shards.removeAt(rmIdx)
-            if (removed.sleeping) sleepingRemoved = true
+            if (removed.sleeping) {
+                emitShardTriangles(removed, bakedDebris)
+                bakedAny = true
+            }
             evictedIds.add(removed.id)
         }
         var activeCount = shards.count { !it.sleeping }
@@ -1908,7 +1800,8 @@ class StructuralWorld {
             val settledIdx = if (tinySleepIdx >= 0) tinySleepIdx else shards.indexOfFirst { it.sleeping }
             if (settledIdx >= 0) {
                 val removed = shards.removeAt(settledIdx)
-                sleepingRemoved = true
+                emitShardTriangles(removed, bakedDebris)
+                bakedAny = true
                 evictedIds.add(removed.id)
                 continue
             }
@@ -1920,10 +1813,38 @@ class StructuralWorld {
                 break
             }
         }
-        if (sleepingRemoved) sleepingRubbleVersion++
+        if (bakedAny) sleepingRubbleVersion++
         if (evictedIds.isNotEmpty()) {
             wakeDependentsOfShards(evictedIds)
         }
+    }
+
+    /** Chips that have been asleep are visual-only, so the live pool stays for pieces still moving. */
+    private fun retireSettledChips(dt: Float) {
+        var retiring: ArrayList<DynamicShard>? = null
+        for (i in shards.indices) {
+            val shard = shards[i]
+            if (!shard.sleeping) {
+                shard.asleepFor = 0f
+                continue
+            }
+            shard.asleepFor += dt
+            if (shard.asleepFor < 0.9f) continue
+            if (shard.boundRadius >= 0.40f) continue
+            if (shard.clusterPieces != null) continue
+            if (retiring == null) retiring = ArrayList()
+            retiring.add(shard)
+        }
+        val batch = retiring ?: return
+        if (bakedDebris.size > 120_000) bakedDebris.reset()
+        val evictedIds = ArrayList<Int>(batch.size)
+        for (shard in batch) {
+            emitShardTriangles(shard, bakedDebris)
+            evictedIds.add(shard.id)
+        }
+        shards.removeAll(batch.toSet())
+        sleepingRubbleVersion++
+        wakeDependentsOfShards(evictedIds)
     }
 
     private fun orientedHalfExtents(he: Vec3, orientation: Quat): Vec3 {
@@ -2386,26 +2307,32 @@ class StructuralWorld {
 
     fun stepShards(dt: Float, terrain: ChunkedTerrain): List<WaterSplashEvent> {
         stepPendingCollapses(dt, terrain)
-        if (shards.isEmpty()) return emptyList()
-        val jolt = joltWorld
-        if (jolt != null) {
-            return stepShardsWithJolt(jolt, dt, terrain)
-        }
-        val substeps = if (dt > 0.011f) 2 else 1
-        val subDt = dt / substeps.toFloat()
-        var combinedSplashes: ArrayList<WaterSplashEvent>? = null
-        repeat(substeps) {
-            val stepSplashes = stepShardsSubstep(subDt, terrain)
-            if (stepSplashes.isNotEmpty()) {
-                var list = combinedSplashes
-                if (list == null) {
-                    list = ArrayList(stepSplashes.size)
-                    combinedSplashes = list
+        val splashes = if (shards.isEmpty()) {
+            emptyList()
+        } else {
+            val jolt = joltWorld
+            if (jolt != null) {
+                stepShardsWithJolt(jolt, dt, terrain)
+            } else {
+                val substeps = if (dt > 0.011f) 2 else 1
+                val subDt = dt / substeps.toFloat()
+                var combinedSplashes: ArrayList<WaterSplashEvent>? = null
+                repeat(substeps) {
+                    val stepSplashes = stepShardsSubstep(subDt, terrain)
+                    if (stepSplashes.isNotEmpty()) {
+                        var list = combinedSplashes
+                        if (list == null) {
+                            list = ArrayList(stepSplashes.size)
+                            combinedSplashes = list
+                        }
+                        list.addAll(stepSplashes)
+                    }
                 }
-                list.addAll(stepSplashes)
+                combinedSplashes ?: emptyList()
             }
         }
-        return combinedSplashes ?: emptyList()
+        retireSettledChips(dt)
+        return splashes
     }
 
     private fun stepShardsWithJolt(
@@ -3709,30 +3636,3 @@ class StructuralWorld {
     }
 }
 
-class FloatArrayBuilder(initialFloats: Int = 65536) {
-    private var data = FloatArray(initialFloats)
-    var size = 0
-        private set
-
-    fun reset() {
-        size = 0
-    }
-
-    private fun ensureCapacity(extra: Int) {
-        if (size + extra > data.size) {
-            data = data.copyOf(max(data.size * 2, size + extra + 4096))
-        }
-    }
-
-    fun emitVertex(p: Vec3, n: Vec3, tint: Vec3, u: Float, v: Float, tile: Float, alpha: Float = 1f) {
-        ensureCapacity(13)
-        var i = size
-        data[i++] = p.x; data[i++] = p.y; data[i++] = p.z
-        data[i++] = n.x; data[i++] = n.y; data[i++] = n.z
-        data[i++] = tint.x; data[i++] = tint.y; data[i++] = tint.z; data[i++] = alpha
-        data[i++] = u; data[i++] = v; data[i++] = tile
-        size = i
-    }
-
-    fun toFloatArray(): FloatArray = data.copyOf(size)
-}

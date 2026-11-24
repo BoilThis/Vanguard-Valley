@@ -556,7 +556,7 @@ class ValleyRenderer(
         }
 
         // Expanding Blast Shockwave Rings
-        val swCount = snap.shockwaveVerts.size / ChunkedTerrain.VERTEX_STRIDE_FLOATS
+        val swCount = snap.shockwaveFloatCount / ChunkedTerrain.VERTEX_STRIDE_FLOATS
         if (swCount > 0) {
             GLES20.glEnable(GLES20.GL_BLEND)
             GLES20.glBlendFunc(GLES20.GL_SRC_ALPHA, GLES20.GL_ONE_MINUS_SRC_ALPHA)
@@ -564,7 +564,7 @@ class ValleyRenderer(
             GLES20.glDepthMask(false)
             GLES20.glUseProgram(lineProg)
             GLES20.glUniformMatrix4fv(lineH.uMVP, 1, false, vpMatrix, 0)
-            uploadVbo(shockwaveVbo, snap.shockwaveVerts, GLES20.GL_DYNAMIC_DRAW)
+            uploadVbo(shockwaveVbo, snap.shockwaveVerts, GLES20.GL_DYNAMIC_DRAW, snap.shockwaveFloatCount)
             drawColorVbo(shockwaveVbo, swCount, GLES20.GL_TRIANGLES)
             GLES20.glDepthMask(true)
             GLES20.glEnable(GLES20.GL_CULL_FACE)
@@ -572,7 +572,7 @@ class ValleyRenderer(
         }
 
         // Volumetric Explosion / Smoke / Fire / Dust / Water Splash Billboards
-        val pCount = snap.particleVerts.size / ChunkedTerrain.VERTEX_STRIDE_FLOATS
+        val pCount = snap.particleFloatCount / ChunkedTerrain.VERTEX_STRIDE_FLOATS
         if (pCount > 0) {
             GLES20.glEnable(GLES20.GL_BLEND)
             GLES20.glBlendFunc(GLES20.GL_SRC_ALPHA, GLES20.GL_ONE_MINUS_SRC_ALPHA)
@@ -584,7 +584,7 @@ class ValleyRenderer(
             GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
             GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, particleTexId)
             GLES20.glUniform1i(particleH.uParticleTex, 0)
-            uploadVbo(particleVbo, snap.particleVerts, GLES20.GL_DYNAMIC_DRAW)
+            uploadVbo(particleVbo, snap.particleVerts, GLES20.GL_DYNAMIC_DRAW, snap.particleFloatCount)
             drawParticleVbo(particleVbo, pCount)
             GLES20.glDepthMask(true)
             GLES20.glEnable(GLES20.GL_CULL_FACE)
@@ -592,12 +592,12 @@ class ValleyRenderer(
         }
 
         // Brush / Artillery Target Preview Ring
-        val lCount = snap.lineVerts.size / ChunkedTerrain.VERTEX_STRIDE_FLOATS
+        val lCount = snap.lineFloatCount / ChunkedTerrain.VERTEX_STRIDE_FLOATS
         if (lCount > 0) {
             GLES20.glUseProgram(lineProg)
             GLES20.glLineWidth(4.0f)
             GLES20.glUniformMatrix4fv(lineH.uMVP, 1, false, vpMatrix, 0)
-            uploadVbo(lineVbo, snap.lineVerts, GLES20.GL_DYNAMIC_DRAW)
+            uploadVbo(lineVbo, snap.lineVerts, GLES20.GL_DYNAMIC_DRAW, snap.lineFloatCount)
             drawColorVbo(lineVbo, lCount, GLES20.GL_LINES)
         }
     }
@@ -733,9 +733,9 @@ class ValleyRenderer(
         }
         if (lastUploadedSnapshotVersion != snap.snapshotVersion) {
             lastUploadedSnapshotVersion = snap.snapshotVersion
-            dynamicVertCount = snap.dynamicVerts.size / ChunkedTerrain.VERTEX_STRIDE_FLOATS
+            dynamicVertCount = snap.dynamicFloatCount / ChunkedTerrain.VERTEX_STRIDE_FLOATS
             if (dynamicVertCount > 0) {
-                uploadVbo(dynamicVbo, snap.dynamicVerts, GLES20.GL_DYNAMIC_DRAW)
+                uploadVbo(dynamicVbo, snap.dynamicVerts, GLES20.GL_DYNAMIC_DRAW, snap.dynamicFloatCount)
             }
         }
     }
@@ -1016,26 +1016,23 @@ class ValleyRenderer(
         uploadVbo(skyVbo, verts, GLES20.GL_STATIC_DRAW)
     }
 
-    private fun uploadVbo(vboId: Int, data: FloatArray, usage: Int) {
-        if (vboId == 0) return
-        val needed = data.size.coerceAtLeast(1)
+    private fun uploadVbo(vboId: Int, data: FloatArray, usage: Int, floatCount: Int = data.size) {
+        if (vboId == 0 || floatCount <= 0) return
         val existing = uploadStaging
-        val buf = if (existing != null && existing.capacity() >= needed) {
+        val buf = if (existing != null && existing.capacity() >= floatCount) {
             existing
         } else {
-            val allocated = ByteBuffer.allocateDirect(needed * 4)
+            val allocated = ByteBuffer.allocateDirect(floatCount * 4)
                 .order(ByteOrder.nativeOrder())
                 .asFloatBuffer()
             uploadStaging = allocated
             allocated
         }
         buf.clear()
-        if (data.isNotEmpty()) {
-            buf.put(data, 0, data.size)
-        }
+        buf.put(data, 0, floatCount)
         buf.position(0)
         GLES20.glBindBuffer(GLES20.GL_ARRAY_BUFFER, vboId)
-        GLES20.glBufferData(GLES20.GL_ARRAY_BUFFER, data.size * 4, buf, usage)
+        GLES20.glBufferData(GLES20.GL_ARRAY_BUFFER, floatCount * 4, buf, usage)
         GLES20.glBindBuffer(GLES20.GL_ARRAY_BUFFER, 0)
     }
 

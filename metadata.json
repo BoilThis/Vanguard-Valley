@@ -2,5 +2,5 @@
   "name": "Vanguard Valley",
   "description": "Realistic 3D physics destruction and exploration sandbox featuring a Small Town, Army Base, Pine Forest, and River with customizable terrain and demolition weapons.",
   "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "majorCapabilities": []
 }

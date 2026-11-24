@@ -1,25 +1,23 @@
-import com.google.gms.googleservices.GoogleServicesPlugin.MissingGoogleServicesStrategy
-
 plugins {
   alias(libs.plugins.android.application)
   alias(libs.plugins.kotlin.compose)
   alias(libs.plugins.google.devtools.ksp)
   alias(libs.plugins.secrets)
-  alias(libs.plugins.google.services)
 }
 
 android {
-  namespace = "com.example"
+  namespace = "com.boilthis.vanguardvalley"
   compileSdk { version = release(36) { minorApiLevel = 1 } }
 
   defaultConfig {
-    applicationId = "com.aistudio.vanguardvalley.krmzqx"
-    minSdk = 24
+    applicationId = "com.boilthis.vanguardvalley"
+    minSdk = 30
     targetSdk = 36
     versionCode = 19
     versionName = "19.0"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    missingDimensionStrategy("precision", "Sp")
   }
 
   // Do not remove or modify these signingConfigs. They are necessary for building, installing,
@@ -43,16 +41,19 @@ android {
   buildTypes {
     release {
       isCrunchPngs = false
-      isMinifyEnabled = false
+      isMinifyEnabled = true
+      isShrinkResources = true
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-      // Do not remove or modify this signingConfig assignment. It is necessary for Android apps in
-      // AI Studio.
-      signingConfig = signingConfigs.getByName("release")
+      val uploadKeystore = file(System.getenv("KEYSTORE_PATH") ?: "${rootDir}/my-upload-key.jks")
+      if (!System.getenv("STORE_PASSWORD").isNullOrBlank() && uploadKeystore.exists()) {
+        signingConfig = signingConfigs.getByName("release")
+      }
     }
     debug {
-      // Do not remove or modify this signingConfig assignment. It is necessary for Android apps in
-      // AI Studio.
-      signingConfig = signingConfigs.getByName("debugConfig")
+      val debugKeystore = file("${rootDir}/debug.keystore")
+      if (debugKeystore.exists()) {
+        signingConfig = signingConfigs.getByName("debugConfig")
+      }
     }
   }
   compileOptions {
@@ -64,10 +65,6 @@ android {
     buildConfig = true
   }
   testOptions { unitTests { isIncludeAndroidResources = true } }
-  dependenciesInfo {
-    includeInApk = false
-    includeInBundle = true
-  }
   packaging {
     resources {
       pickFirsts += listOf("mtl/**", "vk/**")
@@ -75,15 +72,25 @@ android {
   }
 }
 
-// Configure the Secrets Gradle Plugin to use .env and .env.example files
-// to match the convention used in Web projects.
 secrets {
   propertiesFileName = ".env"
   defaultPropertiesFileName = ".env.example"
   ignoreList.add("FIREBASE_APPCHECK_DEBUG_TOKEN")
 }
 
-googleServices { missingGoogleServicesStrategy = MissingGoogleServicesStrategy.WARN }
+val joltDebugAar = configurations.create("joltDebugAar") {
+  isCanBeConsumed = false
+  isCanBeResolved = true
+}
+
+val joltClassesJar = layout.buildDirectory.file("jolt-java/jolt-classes.jar")
+val extractJoltClasses = tasks.register<Copy>("extractJoltClasses") {
+  from({ zipTree(joltDebugAar.singleFile) })
+  include("classes.jar")
+  into(layout.buildDirectory.dir("jolt-java"))
+  rename("classes.jar", "jolt-classes.jar")
+}
+val joltJavaClasses = files(joltClassesJar).builtBy(extractJoltClasses)
 
 // Some unused dependencies are commented out below instead of being removed.
 // This makes it easy to add them back in the future if needed.
@@ -126,9 +133,14 @@ dependencies {
   // implementation(libs.firebase.appcheck.debug)
   implementation(libs.kotlinx.coroutines.android)
   implementation(libs.kotlinx.coroutines.core)
-  implementation(libs.jolt.jni.android)
-  // jolt-jni-Android 6.2.0 SpRelease AAR omits Java classes in classes.jar; base artifact provides pure-Java classes only (no native libs)
-  "releaseImplementation"(libs.jolt.jni.linux64)
+  // SpRelease AAR ships natives but an empty classes.jar. Java classes come from the
+  // SpDebug AAR (debug) or from the jar extracted below (release). Do not depend on
+  // jolt-jni-Linux64 here — that packs a desktop .so into the APK.
+  debugImplementation(libs.jolt.jni.android)
+  releaseImplementation(libs.jolt.jni.android)
+  add("joltDebugAar", "com.github.stephengold:jolt-jni-Android:6.2.0:SpDebug@aar")
+  add("releaseCompileOnly", joltJavaClasses)
+  add("releaseImplementation", joltJavaClasses)
   // implementation(libs.logging.interceptor)
   // implementation(libs.moshi.kotlin)
   // implementation(libs.okhttp)

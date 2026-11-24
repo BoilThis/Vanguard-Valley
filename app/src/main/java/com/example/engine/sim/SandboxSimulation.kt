@@ -2,6 +2,7 @@ package com.example.engine.sim
 
 import com.example.audio.SoundCue
 import com.example.engine.physics.FloatArrayBuilder
+import com.example.engine.physics.MeshRing
 import com.example.engine.physics.StructuralWorld
 import com.example.engine.physics.VoronoiPolyhedron
 import com.example.engine.physics.ZoneBuilder
@@ -202,6 +203,10 @@ class SandboxSimulation(initialConfig: WorldConfig = WorldConfig()) {
     private val shockwaveBuilder = FloatArrayBuilder(8192)
     private val particleBuilder = FloatArrayBuilder(32768)
     private val lineBuilder = FloatArrayBuilder(4096)
+    private val dynamicRing = MeshRing()
+    private val shockwaveRing = MeshRing()
+    private val particleRing = MeshRing()
+    private val lineRing = MeshRing()
 
     // Pre-allocated polyhedron templates (zero per-frame heap allocation)
     private val wreckingBallPoly = VoronoiPolyhedron.createBox(0.55f, 0.55f, 0.55f)
@@ -1552,6 +1557,7 @@ class SandboxSimulation(initialConfig: WorldConfig = WorldConfig()) {
         if (cachedSleepingRubbleVersion == ver) return
         cachedSleepingRubbleVersion = ver
         sleepingRubbleBuilder.reset()
+        world.appendBakedDebris(sleepingRubbleBuilder)
         for (i in world.shards.indices) {
             val shard = world.shards[i]
             if (!shard.sleeping) continue
@@ -1716,16 +1722,25 @@ class SandboxSimulation(initialConfig: WorldConfig = WorldConfig()) {
             }
         }
 
+        val dynamicMesh = dynamicRing.publish(dynamicBuilder)
+        val shockwaveMesh = shockwaveRing.publish(shockwaveBuilder)
+        val particleMesh = particleRing.publish(particleBuilder)
+        val lineMesh = lineRing.publish(lineBuilder)
+
         return RenderSnapshot(
             chunkMeshes = cachedChunkMeshesSnapshot,
             terrainVersion = terrainVersion,
             waterVerts = cachedWaterVerts,
             structureVersion = cachedStructVersion,
             sectorMeshes = cachedSectorMeshesSnapshot,
-            dynamicVerts = if (dynamicBuilder.size == 0) EMPTY_FLOATS else dynamicBuilder.toFloatArray(),
-            shockwaveVerts = if (shockwaveBuilder.size == 0) EMPTY_FLOATS else shockwaveBuilder.toFloatArray(),
-            particleVerts = if (particleBuilder.size == 0) EMPTY_FLOATS else particleBuilder.toFloatArray(),
-            lineVerts = if (lineBuilder.size == 0) EMPTY_FLOATS else lineBuilder.toFloatArray(),
+            dynamicVerts = dynamicMesh.data,
+            dynamicFloatCount = dynamicMesh.floatCount,
+            shockwaveVerts = shockwaveMesh.data,
+            shockwaveFloatCount = shockwaveMesh.floatCount,
+            particleVerts = particleMesh.data,
+            particleFloatCount = particleMesh.floatCount,
+            lineVerts = lineMesh.data,
+            lineFloatCount = lineMesh.floatCount,
             cameraPos = eye,
             cameraLookDir = look,
             cameraMode = cameraMode,
