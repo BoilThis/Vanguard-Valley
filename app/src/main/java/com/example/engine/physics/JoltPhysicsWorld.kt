@@ -282,6 +282,18 @@ class JoltPhysicsWorld(private val gravityY: Float = StructuralWorld.GRAVITY) {
         }
     }
 
+    fun sleepShardIds(ids: List<Int>) {
+        if (ids.isEmpty()) return
+        for (i in ids.indices) {
+            val handle = shardBodies[ids[i]] ?: continue
+            bodyInterface.setLinearAndAngularVelocity(handle.bodyId, 0f, 0f, 0f, 0f, 0f, 0f)
+            bodyInterface.deactivateBody(handle.bodyId)
+            handle.wasActive = false
+            handle.lastVel = Vec3.ZERO
+            handle.lastAngVel = Vec3.ZERO
+        }
+    }
+
     fun wakeShardIds(ids: List<Int>) {
         if (ids.isEmpty()) return
         for (i in ids.indices) {
@@ -746,7 +758,7 @@ class JoltPhysicsWorld(private val gravityY: Float = StructuralWorld.GRAVITY) {
         }
 
         val stepDt = dt.coerceIn(1f / 240f, 0.045f)
-        val collisionSteps = if (stepDt > 0.015f) 2 else 1
+        val collisionSteps = if (shards.size > 220 || stepDt <= 0.015f) 1 else 2
         physicsSystem.update(stepDt, collisionSteps, tempAlloc, jobSys)
 
         val contactsOut: List<JoltContactEvent>

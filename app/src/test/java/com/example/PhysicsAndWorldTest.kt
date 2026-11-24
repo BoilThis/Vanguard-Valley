@@ -502,6 +502,32 @@ class PhysicsAndWorldTest {
     }
 
     @Test
+    fun collapseKeepsAwakeShardsInsideTheActiveBudget() {
+        val sim = SandboxSimulation(WorldConfig(seed = 4207))
+        val hotelFloor = sim.world.blocks.values
+            .filter { it.targetTag == "HOTEL" }
+            .minByOrNull { it.center.y }!!
+        sim.world.applyExplosionDetailed(
+            hotelFloor.center,
+            radius = 9.5f,
+            damage = 420f,
+            impulseStrength = 22f,
+            terrain = sim.terrain
+        )
+        var peak = sim.world.shards.count { !it.sleeping }
+        repeat(100) {
+            sim.step(0.03f)
+            val awake = sim.world.shards.count { !it.sleeping }
+            if (awake > peak) peak = awake
+        }
+        assertTrue(
+            "Awake shards peaked at $peak; budget is ${StructuralWorld.MAX_ACTIVE_SHARDS}",
+            peak <= StructuralWorld.MAX_ACTIVE_SHARDS + 12
+        )
+        assertTrue("Collapse should still produce falling debris", sim.world.shards.isNotEmpty() || sim.world.collapsedCount > 0)
+    }
+
+    @Test
     fun debrisPhysics_tallSixStoryCollapseNeverFreezesAirborneAndReachesGround() {
         val sim = SandboxSimulation(WorldConfig(seed = 4207))
         val hotelFloor = sim.world.blocks.values
