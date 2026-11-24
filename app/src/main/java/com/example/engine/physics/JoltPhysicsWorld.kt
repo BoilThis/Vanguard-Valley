@@ -282,6 +282,15 @@ class JoltPhysicsWorld(private val gravityY: Float = StructuralWorld.GRAVITY) {
         }
     }
 
+    fun wakeShardIds(ids: List<Int>) {
+        if (ids.isEmpty()) return
+        for (i in ids.indices) {
+            val handle = shardBodies[ids[i]] ?: continue
+            bodyInterface.activateBody(handle.bodyId)
+            handle.wasActive = true
+        }
+    }
+
     fun wakeAroundPoint(pos: Vec3, radius: Float) {
         val r = max(0.5f, radius)
         val box = AaBox(

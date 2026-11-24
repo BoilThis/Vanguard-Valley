@@ -81,6 +81,7 @@ class StructuralWorld {
     private val joltWorld: JoltPhysicsWorld? =
         if (allowJoltPhysics && JoltRuntime.isAvailable) JoltPhysicsWorld() else null
     private val bakedDebris = FloatArrayBuilder(16384)
+    private var debrisTerrain: ChunkedTerrain? = null
 
     val isUsingJoltPhysics: Boolean get() = joltWorld != null
 
@@ -481,6 +482,7 @@ class StructuralWorld {
         impulseStrength: Float,
         terrain: ChunkedTerrain
     ): ExplosionOutcome {
+        debrisTerrain = terrain
         val secondaryBlasts = ArrayList<SecondaryBlastEvent>()
         val splashes = ArrayList<WaterSplashEvent>()
         val toDestroy = ArrayList<Pair<StructuralBlock, Float>>()
@@ -1788,7 +1790,7 @@ class StructuralWorld {
                 if (smallIdx >= 0) smallIdx else 0
             }
             val removed = shards.removeAt(rmIdx)
-            if (removed.sleeping) {
+            if (removed.sleeping && canBakeSettled(removed)) {
                 emitShardTriangles(removed, bakedDebris)
                 bakedAny = true
             }
@@ -1800,8 +1802,10 @@ class StructuralWorld {
             val settledIdx = if (tinySleepIdx >= 0) tinySleepIdx else shards.indexOfFirst { it.sleeping }
             if (settledIdx >= 0) {
                 val removed = shards.removeAt(settledIdx)
-                emitShardTriangles(removed, bakedDebris)
-                bakedAny = true
+                if (canBakeSettled(removed)) {
+                    emitShardTriangles(removed, bakedDebris)
+                    bakedAny = true
+                }
                 evictedIds.add(removed.id)
                 continue
             }
@@ -1832,6 +1836,7 @@ class StructuralWorld {
             if (shard.asleepFor < 0.9f) continue
             if (shard.boundRadius >= 0.40f) continue
             if (shard.clusterPieces != null) continue
+            if (!canBakeSettled(shard)) continue
             if (retiring == null) retiring = ArrayList()
             retiring.add(shard)
         }
@@ -1845,6 +1850,138 @@ class StructuralWorld {
         shards.removeAll(batch.toSet())
         sleepingRubbleVersion++
         wakeDependentsOfShards(evictedIds)
+    }
+
+    private fun canBakeSettled(shard: DynamicShard): Boolean {
+        val terrain = debrisTerrain ?: return false
+        if (!shard.sleeping) return false
+        val ground = terrain.groundSurfaceY(shard.center.x, shard.center.z)
+        return shard.center.y - shard.boundRadius <= ground + 0.6f
+    }
+
+    /**
+     * Jolt (and the custom integrator) will mark a whole contact island asleep even when that
+     * island is still in the air. Those shards then get baked into the rubble mesh and hang
+     * forever. Only a support path down to the terrain, or to a block that still stands, may stay asleep.
+     */
+    private fun releaseFloatingSleepers(terrain: ChunkedTerrain) {
+        if (shards.isEmpty()) return
+
+        val heldBlocks = HashSet<Int>()
+        val blockQueue = ArrayDeque<Int>()
+        val dependents = HashMap<Int, ArrayList<Int>>()
+        for (block in blocks.values) {
+            if (block.groundAnchored) {
+                if (heldBlocks.add(block.id)) blockQueue.add(block.id)
+            }
+            for (sid in block.supportIds) {
+                val list = dependents[sid]
+                if (list == null) dependents[sid] = ArrayList<Int>().apply { add(block.id) }
+                else list.add(block.id)
+            }
+        }
+        while (blockQueue.isNotEmpty()) {
+            val id = blockQueue.removeFirst()
+            val deps = dependents[id] ?: continue
+            for (dep in deps) {
+                if (heldBlocks.add(dep)) blockQueue.add(dep)
+            }
+        }
+
+        val grounded = BooleanArray(shards.size)
+        val queue = ArrayDeque<Int>()
+        for (i in shards.indices) {
+            val shard = shards[i]
+            val ground = terrain.groundSurfaceY(shard.center.x, shard.center.z)
+            if (shard.center.y - shard.boundRadius <= ground + 0.6f) {
+                grounded[i] = true
+                queue.add(i)
+            }
+        }
+        for (i in shards.indices) {
+            if (grounded[i]) continue
+            if (shardTouchesHeldBlock(shards[i], heldBlocks)) {
+                grounded[i] = true
+                queue.add(i)
+            }
+        }
+
+        val cell = 4f
+        val grid = HashMap<Long, ArrayList<Int>>()
+        for (i in shards.indices) {
+            val shard = shards[i]
+            val key = shardCellKey(shard.center.x, shard.center.z, cell)
+            val list = grid[key]
+            if (list == null) grid[key] = ArrayList<Int>().apply { add(i) }
+            else list.add(i)
+        }
+
+        while (queue.isNotEmpty()) {
+            val i = queue.removeFirst()
+            val base = shards[i]
+            val cx = kotlin.math.floor(base.center.x / cell).toInt()
+            val cz = kotlin.math.floor(base.center.z / cell).toInt()
+            for (dx in -1..1) {
+                for (dz in -1..1) {
+                    val list = grid[shardCellKey((cx + dx) * cell, (cz + dz) * cell, cell)] ?: continue
+                    for (j in list) {
+                        if (grounded[j]) continue
+                        val other = shards[j]
+                        if (other.center.y + 0.2f < base.center.y) continue
+                        val horiz = hypot(other.center.x - base.center.x, other.center.z - base.center.z)
+                        val reach = base.boundRadius + other.boundRadius + 0.35f
+                        if (horiz > reach) continue
+                        val gap = (other.center.y - other.boundRadius) - (base.center.y + base.boundRadius)
+                        if (gap > 0.4f) continue
+                        grounded[j] = true
+                        queue.add(j)
+                    }
+                }
+            }
+        }
+
+        val wakeIds = ArrayList<Int>()
+        var wokeAny = false
+        for (i in shards.indices) {
+            val shard = shards[i]
+            if (!shard.sleeping || grounded[i]) continue
+            if (shard.sleeping) {
+                shard.sleeping = false
+                wokeAny = true
+            }
+            shard.isGroundedContact = false
+            shard.supportedByBlockId = null
+            shard.supportedByShardId = null
+            shard.settleTimer = 0f
+            shard.asleepFor = 0f
+            if (shard.vel.y > -0.35f) {
+                shard.vel = Vec3(shard.vel.x, -1.4f, shard.vel.z)
+            }
+            wakeIds.add(shard.id)
+        }
+        if (wokeAny) sleepingRubbleVersion++
+        if (wakeIds.isNotEmpty()) joltWorld?.wakeShardIds(wakeIds)
+    }
+
+    private fun shardCellKey(x: Float, z: Float, cell: Float): Long {
+        val cx = kotlin.math.floor(x / cell).toInt()
+        val cz = kotlin.math.floor(z / cell).toInt()
+        return (cx.toLong() shl 32) xor (cz.toLong() and 0xffffffffL)
+    }
+
+    private fun shardTouchesHeldBlock(shard: DynamicShard, heldBlocks: Set<Int>): Boolean {
+        val nearby = queryNearbyBlocks(shard.center.x, shard.center.z, shard.boundRadius + 2.5f)
+        for (i in nearby.indices) {
+            val block = nearby[i]
+            if (block.id !in heldBlocks) continue
+            val he = block.poly.halfExtents
+            val dx = abs(block.center.x - shard.center.x) - he.x - shard.boundRadius
+            val dz = abs(block.center.z - shard.center.z) - he.z - shard.boundRadius
+            if (dx > 0.35f || dz > 0.35f) continue
+            val gap = (shard.center.y - shard.boundRadius) - (block.center.y + he.y)
+            if (gap <= 0.4f && shard.center.y + 0.15f >= block.center.y - he.y) return true
+        }
+        return false
     }
 
     private fun orientedHalfExtents(he: Vec3, orientation: Quat): Vec3 {
@@ -2306,6 +2443,7 @@ class StructuralWorld {
     }
 
     fun stepShards(dt: Float, terrain: ChunkedTerrain): List<WaterSplashEvent> {
+        debrisTerrain = terrain
         stepPendingCollapses(dt, terrain)
         val splashes = if (shards.isEmpty()) {
             emptyList()
@@ -2331,6 +2469,7 @@ class StructuralWorld {
                 combinedSplashes ?: emptyList()
             }
         }
+        releaseFloatingSleepers(terrain)
         retireSettledChips(dt)
         return splashes
     }

@@ -1395,6 +1395,69 @@ class PhysicsAndWorldTest {
         }
     }
 
+    @Test
+    fun airborneSleepingShardsFallEvenIfTheySupportEachOther() {
+        val terrain = ChunkedTerrain(WorldConfig(seed = 5))
+        val world = StructuralWorld()
+        val x = -18f
+        val z = 6f
+        val gy = terrain.groundSurfaceY(x, z)
+        val poly = VoronoiPolyhedron.createBox(0.9f, 0.16f, 0.7f)
+        world.shards.add(
+            com.example.engine.physics.DynamicShard(
+                id = 88001,
+                poly = poly,
+                center = Vec3(x, gy + 14f, z),
+                orientation = Quat.IDENTITY,
+                uvOrigin = Vec3.ZERO,
+                tileId = MaterialTile.CONCRETE,
+                tint = Vec3(1f, 1f, 1f),
+                vel = Vec3.ZERO,
+                angVel = Vec3.ZERO,
+                sleeping = true,
+                supportedByShardId = 88002
+            )
+        )
+        world.shards.add(
+            com.example.engine.physics.DynamicShard(
+                id = 88002,
+                poly = poly,
+                center = Vec3(x, gy + 14.5f, z),
+                orientation = Quat.IDENTITY,
+                uvOrigin = Vec3.ZERO,
+                tileId = MaterialTile.CONCRETE,
+                tint = Vec3(1f, 1f, 1f),
+                vel = Vec3.ZERO,
+                angVel = Vec3.ZERO,
+                sleeping = true,
+                supportedByShardId = 88001
+            )
+        )
+        val grounded = com.example.engine.physics.DynamicShard(
+            id = 88003,
+            poly = VoronoiPolyhedron.createBox(0.4f, 0.12f, 0.4f),
+            center = Vec3(x + 6f, gy + 0.2f, z),
+            orientation = Quat.IDENTITY,
+            uvOrigin = Vec3.ZERO,
+            tileId = MaterialTile.BRICK,
+            tint = Vec3(1f, 1f, 1f),
+            vel = Vec3.ZERO,
+            angVel = Vec3.ZERO,
+            sleeping = true
+        )
+        world.shards.add(grounded)
+
+        world.stepShards(0.05f, terrain)
+        assertTrue("High slab must wake even if another shard claims to support it", !world.shards[0].sleeping)
+        assertTrue(!world.shards[1].sleeping)
+        assertTrue("Rubble already on the ground must stay asleep", world.shards[2].sleeping)
+        repeat(25) { world.stepShards(0.05f, terrain) }
+        assertTrue(
+            "Woken slab should drop (y=${world.shards[0].center.y}, gy=$gy)",
+            world.shards[0].center.y < gy + 10f
+        )
+    }
+
     private fun assertFalseContains(keys: Set<Int>, id: Int) {
         assertTrue("Expected block $id to be detached/removed", !keys.contains(id))
     }
