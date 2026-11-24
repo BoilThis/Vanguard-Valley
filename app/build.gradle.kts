@@ -13,8 +13,8 @@ android {
     applicationId = "com.aistudio.vanguardvalley.krmzqx"
     minSdk = 30
     targetSdk = 36
-    versionCode = 20
-    versionName = "20.0"
+    versionCode = 22
+    versionName = "22.0"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     missingDimensionStrategy("precision", "Sp")
