@@ -1,0 +1,23 @@
+<resources>
+    <string name="app_name">Vanguard Valley</string>
+    <string name="zone_town">Small Town</string>
+    <string name="zone_downtown">Downtown</string>
+    <string name="zone_park">Central Park</string>
+    <string name="zone_industrial">Industrial</string>
+    <string name="zone_base">Army Base</string>
+    <string name="zone_forest">Pine Forest</string>
+    <string name="zone_river">River Crossing</string>
+    <string name="zone_valley">Vanguard Valley</string>
+    <string name="cd_camera_mode">Switch camera perspective</string>
+    <string name="cd_world_studio">Open World Studio customizer</string>
+    <string name="cd_reset_valley">Reset valley destruction</string>
+    <string name="cd_fire_weapon">Fire selected weapon</string>
+    <string name="cd_detonate_c4">Detonate armed C4 charges</string>
+    <string name="cd_jump">Jump or ascend</string>
+    <string name="cd_descend">Descend drone</string>
+    <string name="cd_sprint">Toggle sprint</string>
+    <string name="cd_mute_audio">Toggle sound effects mute</string>
+    <string name="cd_game_mode">Switch between Sandbox and Demolition Ops</string>
+    <string name="cd_ops_briefing">Open Demolition Ops contracts</string>
+    <string name="cd_build_material">Select wall build material</string>
+</resources>
