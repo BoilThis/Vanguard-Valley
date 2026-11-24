@@ -136,19 +136,20 @@ internal fun StructuralWorld.releaseClusterPieces(
         secondarySplits: ArrayList<DynamicShard>
     ): Boolean {
         val pieces = shard.clusterPieces ?: return false
-        val room = fractureRoom()
-        if (room < 4) return false
+        if (fractureRoom() <= 0 && ballisticRoom() <= 0) return false
         if (!splitIds.add(shard.id)) return false
         toRemove.add(shard)
         val profile = MaterialProfiles.forTile(shard.tileId)
         collapseFailureEvents.add(CollapseFailureEvent(shard.center, shard.tileId, isClusterBreak = true))
-        val emit = if (pieces.size <= room) pieces else {
-            val ranked = ArrayList(pieces)
-            ranked.sortByDescending { it.boundRadius }
-            ranked.subList(0, room)
-        }
-        for (i in emit.indices) {
-            val piece = emit[i]
+        val ranked = ArrayList(pieces)
+        ranked.sortByDescending { it.boundRadius }
+        var simLeft = min(2, fractureRoom())
+        var heavyAdded = 0
+        for (i in ranked.indices) {
+            val piece = ranked[i]
+            val wantsHeavy = simLeft > 0 && piece.boundRadius >= 0.55f
+            val queuedBallistic = secondarySplits.count { it.ballistic }
+            if (!wantsHeavy && ballisticRoom() - queuedBallistic <= 0) continue
             val worldOff = shard.orientation.rotate(piece.localOffset)
             val pointVel = shard.vel + shard.angVel.cross(worldOff)
             val scatter = Vec3(
@@ -178,12 +179,49 @@ internal fun StructuralWorld.releaseClusterPieces(
                     uvLocalOffset = piece.uvLocalOffset,
                     splitDepth = 1,
                     boundRadius = piece.boundRadius,
-                    invInertiaLocal = computeInvInertiaLocal(piece.poly.halfExtents, piece.mass)
+                    invInertiaLocal = computeInvInertiaLocal(piece.poly.halfExtents, piece.mass),
+                    ballistic = !wantsHeavy
                 )
             )
+            if (wantsHeavy) {
+                simLeft--
+                heavyAdded++
+            }
         }
-        reservedFractures += emit.size
+        reservedFractures += heavyAdded
         return true
+    }
+
+    /** Bonded slabs only stay intact for a moment, then they become loose chunks. */
+internal fun StructuralWorld.releaseMatureClusters() {
+        val due = ArrayList<DynamicShard>()
+        for (i in shards.indices) {
+            val shard = shards[i]
+            if (shard.clusterPieces != null && !shard.sleeping && shard.age >= 0.10f) due.add(shard)
+        }
+        if (due.isEmpty()) return
+        val spawned = ArrayList<DynamicShard>()
+        val remove = ArrayList<DynamicShard>()
+        val ids = HashSet<Int>()
+        for (i in due.indices) {
+            releaseClusterPieces(due[i], ids, remove, spawned)
+        }
+        if (remove.isNotEmpty()) {
+            val rmIds = ArrayList<Int>(remove.size)
+            var anySleeping = false
+            for (s in remove) {
+                if (s.sleeping) anySleeping = true
+                rmIds.add(s.id)
+            }
+            if (anySleeping) sleepingRubbleVersion++
+            shards.removeAll(remove.toSet())
+            wakeDependentsOfShards(rmIds)
+        }
+        for (i in spawned.indices) {
+            trimShardPoolIfNeeded(incomingSizeHint = spawned[i].boundRadius)
+            shards.add(spawned[i])
+        }
+        reservedFractures = 0
     }
 
 internal fun StructuralWorld.queueSecondarySplit(
@@ -198,14 +236,18 @@ internal fun StructuralWorld.queueSecondarySplit(
             return releaseClusterPieces(shard, splitIds, toRemove, secondarySplits)
         }
         val room = fractureRoom()
-        if (room < 2) return false
-        val cappedPieces = min(pieces, room)
+        val visualPieces = min(pieces, 8).coerceAtLeast(2)
+        if (room <= 0 && ballisticRoom() <= 0) return false
         if (!shard.canSecondarySplit || shard.splitDepth >= 2 || !splitIds.add(shard.id)) return false
         toRemove.add(shard)
         val nextDepth = shard.splitDepth + 1
         val style = MaterialProfiles.forTile(shard.tileId).fractureStyle
-        val fractured = VoronoiPolyhedron.shatter(shard.poly, localImpact, cappedPieces, rng, style)
+        val fractured = VoronoiPolyhedron.shatter(shard.poly, localImpact, visualPieces, rng, style)
+        var simLeft = min(2, room)
+        var heavyAdded = 0
         for ((off, subPoly) in fractured) {
+            val wantsHeavy = simLeft > 0 && subPoly.boundRadius >= 0.55f
+            if (!wantsHeavy && ballisticRoom() <= 0) continue
             val subMass = estimateShardMass(subPoly, shard.tileId)
             secondarySplits.add(
                 DynamicShard(
@@ -233,11 +275,16 @@ internal fun StructuralWorld.queueSecondarySplit(
                     uvLocalOffset = shard.uvLocalOffset + off,
                     splitDepth = nextDepth,
                     boundRadius = subPoly.boundRadius,
-                    invInertiaLocal = computeInvInertiaLocal(subPoly.halfExtents, subMass)
+                    invInertiaLocal = computeInvInertiaLocal(subPoly.halfExtents, subMass),
+                    ballistic = !wantsHeavy
                 )
             )
+            if (wantsHeavy) {
+                simLeft--
+                heavyAdded++
+            }
         }
-        reservedFractures += fractured.size
+        reservedFractures += heavyAdded
         return true
     }
 
@@ -503,7 +550,7 @@ internal fun StructuralWorld.stepShardsSubstep(dt: Float, terrain: ChunkedTerrai
         for (idx in shards.indices) {
             val s = shards[idx]
             shardById[s.id] = s
-            if (!s.sleeping) activeShardCount++
+            if (!s.sleeping && !s.ballistic) activeShardCount++
             shardWorldHeScratch.add(orientedHalfExtents(s.poly.halfExtents, s.orientation))
         }
 
@@ -511,7 +558,7 @@ internal fun StructuralWorld.stepShardsSubstep(dt: Float, terrain: ChunkedTerrai
         for (i in shards.indices) {
             val shard = shards[i]
             shard.age += dt
-            if (shard.sleeping) continue
+            if (shard.ballistic || shard.sleeping) continue
 
             shard.isGroundedContact = false
             val wasAboveWater = shard.center.y > ChunkedTerrain.WATER_LEVEL
@@ -928,7 +975,7 @@ internal fun StructuralWorld.stepShardsSubstep(dt: Float, terrain: ChunkedTerrai
                     for (bi in ai + 1 until bSize) {
                         val idxB = bucket[bi]
                         val b = shards[idxB]
-                        if ((a.sleeping && b.sleeping) || splitIds.contains(a.id) || splitIds.contains(b.id)) continue
+                        if (a.ballistic || b.ballistic || (a.sleeping && b.sleeping) || splitIds.contains(a.id) || splitIds.contains(b.id)) continue
 
                         val lo = min(idxA, idxB)
                         val hi = max(idxA, idxB)
@@ -1192,7 +1239,7 @@ internal fun StructuralWorld.stepShardsSubstep(dt: Float, terrain: ChunkedTerrai
         // Phase 3: Verified Contact + Multi-Point Flat-Face Fast Rubble Sleep Check
         for (i in shards.indices) {
             val shard = shards[i]
-            if (shard.sleeping || splitIds.contains(shard.id)) continue
+            if (shard.ballistic || shard.sleeping || splitIds.contains(shard.id)) continue
             val supId = shard.supportedByBlockId
             if (supId != null && !blocks.containsKey(supId)) {
                 shard.supportedByBlockId = null

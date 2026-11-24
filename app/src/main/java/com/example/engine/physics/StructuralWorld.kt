@@ -17,9 +17,10 @@ class StructuralWorld {
 
     companion object {
         const val MAX_ACTIVE_SHARDS = 280
-        const val MAX_TOTAL_SHARDS = 540
-        /** Voronoi dust stops at this count so whole floors can still fall as single bodies. */
-        const val SHATTER_CEILING = 160
+        const val MAX_TOTAL_SHARDS = 720
+        /** Full rigid bodies. Extra pieces past this are ballistic so a wall can break into chunks. */
+        const val SHATTER_CEILING = 140
+        const val MAX_BALLISTIC = 420
         const val GRAVITY = -18.5f
         const val SECTOR_SIZE = 64f
         const val SECTORS_X = 8
@@ -802,6 +803,7 @@ class StructuralWorld {
         debrisTerrain = terrain
         reservedFractures = 0
         stepPendingCollapses(dt, terrain)
+        releaseMatureClusters()
         shedAwakeOverflow(terrain)
         val splashes = if (shards.isEmpty()) {
             emptyList()
@@ -827,6 +829,7 @@ class StructuralWorld {
                 combinedSplashes ?: emptyList()
             }
         }
+        stepBallisticShards(dt, terrain)
         shedAwakeOverflow(terrain)
         releaseFloatingSleepers(terrain)
         retireSettledChips(dt)

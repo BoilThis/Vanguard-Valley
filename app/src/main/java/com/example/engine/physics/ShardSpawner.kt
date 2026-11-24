@@ -18,8 +18,17 @@ import kotlin.random.Random
 
 internal fun StructuralWorld.awakeShardCount(): Int {
         var n = 0
-        for (i in shards.indices) if (!shards[i].sleeping) n++
+        for (i in shards.indices) {
+            val s = shards[i]
+            if (!s.sleeping && !s.ballistic) n++
+        }
         return n
+    }
+
+internal fun StructuralWorld.ballisticRoom(): Int {
+        var n = 0
+        for (i in shards.indices) if (shards[i].ballistic) n++
+        return (StructuralWorld.MAX_BALLISTIC - n).coerceAtLeast(0)
     }
 
     /** How many new dynamic bodies this collapse can still afford. */
@@ -38,14 +47,13 @@ internal fun StructuralWorld.clampShardPieces(block: StructuralBlock, isPrecisio
         } else {
             basePieces.coerceIn(12, 20)
         }
-        val room = shatterRoom()
-        if (room <= 0) return 0
-        val share = when {
-            room > 120 -> 6
-            room > 60 -> 3
-            else -> 1
+        val visual = when {
+            isPrecision -> min(base, 8)
+            ext > 2.2f -> min(base, 14)
+            ext > 1.3f -> min(base, 10)
+            else -> min(base, 6)
         }
-        return min(base, if (isPrecision) min(share, 4) else share)
+        return visual
     }
 
 internal fun StructuralWorld.estimateShardMass(poly: ConvexPolyhedron, tileId: Int): Float {
@@ -99,7 +107,6 @@ internal fun StructuralWorld.computeClusterHullPoly(pieces: List<ClusterPiece>):
     }
 
 internal fun StructuralWorld.detachWholeAsFallingShard(block: StructuralBlock, leanOrigin: Vec3? = null) {
-        if (fractureRoom() <= 0) return
         val profile = MaterialProfiles.forTile(block.tileId)
         val he = block.poly.halfExtents
         val maxDim = max(he.x, max(he.y, he.z))
@@ -117,9 +124,10 @@ internal fun StructuralWorld.detachWholeAsFallingShard(block: StructuralBlock, l
         // holding 2-3 pre-fractured sub-meter Voronoi pieces bonded by breakable strain thresholds.
         if (maxDim > 0.85f || he.len() > 1.15f) {
             val stressPieces = when {
-                maxDim > 2.4f -> 7
-                maxDim > 1.5f -> 5
-                else -> 4
+                maxDim > 3.0f -> 12
+                maxDim > 1.8f -> 9
+                maxDim > 1.1f -> 7
+                else -> 5
             }
             val localStress = Vec3(
                 (rng.nextFloat() - 0.5f) * he.x * 0.65f,
@@ -579,8 +587,12 @@ internal fun StructuralWorld.spawnShatteredShards(
             rng = rng,
             fractureStyle = profile.fractureStyle
         )
+        var heavyFromThisBlock = 0
         for ((offset, piecePoly) in split) {
-            if (fractureRoom() <= 0) break
+            val wantsHeavy = piecePoly.boundRadius >= 0.70f &&
+                heavyFromThisBlock < 2 &&
+                awakeShardCount() < StructuralWorld.MAX_ACTIVE_SHARDS
+            if (!wantsHeavy && ballisticRoom() <= 0) continue
             trimShardPoolIfNeeded(incomingSizeHint = piecePoly.boundRadius)
             val worldCenter = block.center + block.orientation.rotate(offset)
             val radialOut = Vec3(
@@ -626,8 +638,10 @@ internal fun StructuralWorld.spawnShatteredShards(
                     uvLocalOffset = block.uvLocalOffset + offset,
                     splitDepth = 0,
                     boundRadius = piecePoly.boundRadius,
-                    invInertiaLocal = computeInvInertiaLocal(piecePoly.halfExtents, mass)
+                    invInertiaLocal = computeInvInertiaLocal(piecePoly.halfExtents, mass),
+                    ballistic = !wantsHeavy
                 )
             )
+            if (wantsHeavy) heavyFromThisBlock++
         }
     }

@@ -586,7 +586,9 @@ class JoltPhysicsWorld(private val gravityY: Float = StructuralWorld.GRAVITY) {
 
     private fun syncShardsBeforeStep(shards: List<DynamicShard>) {
         val liveIds = HashSet<Int>(shards.size * 2 + 8)
-        for (i in shards.indices) liveIds.add(shards[i].id)
+        for (i in shards.indices) {
+            if (!shards[i].ballistic) liveIds.add(shards[i].id)
+        }
 
         val iter = shardBodies.entries.iterator()
         while (iter.hasNext()) {
@@ -600,6 +602,7 @@ class JoltPhysicsWorld(private val gravityY: Float = StructuralWorld.GRAVITY) {
 
         for (i in shards.indices) {
             val shard = shards[i]
+            if (shard.ballistic) continue
             val existing = shardBodies[shard.id]
             if (existing == null) {
                 val shapeRef = buildShapeForShard(shard)

@@ -514,17 +514,20 @@ class PhysicsAndWorldTest {
             impulseStrength = 22f,
             terrain = sim.terrain
         )
-        var peak = sim.world.shards.count { !it.sleeping }
+        var peak = sim.world.shards.count { !it.sleeping && !it.ballistic }
         repeat(100) {
             sim.step(0.03f)
-            val awake = sim.world.shards.count { !it.sleeping }
+            val awake = sim.world.shards.count { !it.sleeping && !it.ballistic }
             if (awake > peak) peak = awake
         }
         assertTrue(
-            "Awake shards peaked at $peak; budget is ${StructuralWorld.MAX_ACTIVE_SHARDS}",
+            "Simulated shards peaked at $peak; budget is ${StructuralWorld.MAX_ACTIVE_SHARDS}",
             peak <= StructuralWorld.MAX_ACTIVE_SHARDS + 12
         )
-        assertTrue("Collapse should still produce falling debris", sim.world.shards.isNotEmpty() || sim.world.collapsedCount > 0)
+        assertTrue(
+            "Collapse should break into chunks, not one slab (shards=${sim.world.shards.size})",
+            sim.world.shards.size >= 30
+        )
     }
 
     @Test

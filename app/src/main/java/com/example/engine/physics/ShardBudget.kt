@@ -85,7 +85,7 @@ internal fun StructuralWorld.shedAwakeOverflow(terrain: ChunkedTerrain) {
         for (i in order) {
             if (awake <= StructuralWorld.MAX_ACTIVE_SHARDS) break
             val shard = shards[i]
-            if (shard.sleeping || shard.age < 0.12f) continue
+            if (shard.ballistic || shard.sleeping || shard.age < 0.12f) continue
             if (shard.vel.lenSq() > 6f || shard.angVel.lenSq() > 8f) continue
             val ground = terrain.groundSurfaceY(shard.center.x, shard.center.z)
             if (shard.center.y - shard.boundRadius > ground + 0.6f) continue
@@ -104,7 +104,7 @@ internal fun StructuralWorld.shedAwakeOverflow(terrain: ChunkedTerrain) {
             for (i in order) {
                 if (awake <= StructuralWorld.MAX_ACTIVE_SHARDS) break
                 val shard = shards[i]
-                if (shard.sleeping || shard.clusterPieces != null) continue
+                if (shard.ballistic || shard.sleeping || shard.clusterPieces != null) continue
                 if (shard.boundRadius >= 0.55f || shard.age < 0.20f) continue
                 remove.add(shard)
                 dropped.add(shard.id)
@@ -118,6 +118,67 @@ internal fun StructuralWorld.shedAwakeOverflow(terrain: ChunkedTerrain) {
             joltWorld?.sleepShardIds(sleepIds)
         }
         if (dropped.isNotEmpty()) wakeDependentsOfShards(dropped)
+    }
+
+    /** Chips drawn and tumbled, but not given a rigid-body in the solver. */
+internal fun StructuralWorld.stepBallisticShards(dt: Float, terrain: ChunkedTerrain) {
+        val damp = (1f - 1.4f * dt).coerceIn(0.84f, 0.99f)
+        for (i in shards.indices) {
+            val shard = shards[i]
+            if (!shard.ballistic || shard.sleeping) continue
+            shard.age += dt
+            shard.vel = Vec3(
+                shard.vel.x * damp,
+                shard.vel.y + StructuralWorld.GRAVITY * dt,
+                shard.vel.z * damp
+            )
+            shard.angVel = shard.angVel * damp
+            shard.center += shard.vel * dt
+            shard.orientation = Quat.integrateAngular(shard.orientation, shard.angVel, dt)
+
+            val nearby = queryNearbyBlocks(shard.center.x, shard.center.z, shard.boundRadius + 2.2f)
+            for (bi in nearby.indices) {
+                val block = nearby[bi]
+                val he = block.poly.halfExtents
+                val dx = shard.center.x - block.center.x
+                val dy = shard.center.y - block.center.y
+                val dz = shard.center.z - block.center.z
+                val pad = min(shard.boundRadius, 0.42f)
+                val penX = he.x + pad - abs(dx)
+                val penY = he.y + pad - abs(dy)
+                val penZ = he.z + pad - abs(dz)
+                if (penX <= 0f || penY <= 0f || penZ <= 0f) continue
+                if (penY <= penX && penY <= penZ) {
+                    val sign = if (dy >= 0f) 1f else -1f
+                    shard.center = Vec3(shard.center.x, block.center.y + sign * (he.y + pad), shard.center.z)
+                    if (shard.vel.y * sign < 0f) shard.vel = Vec3(shard.vel.x * 0.55f, 0f, shard.vel.z * 0.55f)
+                } else if (penX <= penZ) {
+                    val sign = if (dx >= 0f) 1f else -1f
+                    shard.center = Vec3(block.center.x + sign * (he.x + pad), shard.center.y, shard.center.z)
+                    if (shard.vel.x * sign < 0f) shard.vel = Vec3(0f, shard.vel.y, shard.vel.z)
+                } else {
+                    val sign = if (dz >= 0f) 1f else -1f
+                    shard.center = Vec3(shard.center.x, shard.center.y, block.center.z + sign * (he.z + pad))
+                    if (shard.vel.z * sign < 0f) shard.vel = Vec3(shard.vel.x, shard.vel.y, 0f)
+                }
+            }
+
+            val ground = terrain.groundSurfaceY(shard.center.x, shard.center.z)
+            val foot = min(shard.boundRadius, shard.poly.halfExtents.y + 0.08f)
+            if (shard.center.y - foot <= ground) {
+                shard.center = Vec3(shard.center.x, ground + foot, shard.center.z)
+                if (shard.vel.y < 0f) {
+                    shard.vel = Vec3(shard.vel.x * 0.45f, -shard.vel.y * 0.12f, shard.vel.z * 0.45f)
+                }
+                shard.angVel = shard.angVel * 0.45f
+                if (shard.vel.lenSq() < 0.65f && shard.angVel.lenSq() < 1.1f) {
+                    shard.sleeping = true
+                    shard.vel = Vec3.ZERO
+                    shard.angVel = Vec3.ZERO
+                    shard.isGroundedContact = true
+                }
+            }
+        }
     }
 
     /** Chips that have been asleep are visual-only, so the live pool stays for pieces still moving. */

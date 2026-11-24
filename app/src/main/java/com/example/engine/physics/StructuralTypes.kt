@@ -72,7 +72,9 @@ data class DynamicShard(
     val clusterPieces: List<ClusterPiece>? = null,
     val clusterStrainBudget: Float = 0f,
     var lastManifoldCount: Int = 0,
-    var asleepFor: Float = 0f
+    var asleepFor: Float = 0f,
+    /** Falls with gravity and terrain only. Drawn, but not a solver body. */
+    var ballistic: Boolean = false
 )
 
 data class SecondaryBlastEvent(
