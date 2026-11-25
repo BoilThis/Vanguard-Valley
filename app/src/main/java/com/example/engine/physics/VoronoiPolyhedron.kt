@@ -291,6 +291,11 @@ object VoronoiPolyhedron {
         var pieces = mutableListOf(Vec3.ZERO to poly)
         val isLargeParent = poly.boundRadius > 1.15f
         val cuts = when (fractureStyle) {
+            FractureStyle.SHATTER_TRIANGLE -> when {
+                maxPieces >= 12 -> 7
+                maxPieces >= 8 -> 5
+                else -> 4
+            }
             FractureStyle.SHEAR_STEEL -> when {
                 maxPieces >= 10 || (isLargeParent && maxPieces >= 6) -> 3
                 maxPieces >= 4 -> 2
@@ -312,11 +317,11 @@ object VoronoiPolyhedron {
                 val maxHalfDim = max(piece.halfExtents.x, max(piece.halfExtents.y, piece.halfExtents.z))
                 val remainingSrc = pieces.size - idx
                 val capReached = nextPieces.size + remainingSrc >= maxPieces + 1
-                // Always prioritize cutting oversized >1.2m segments unless budget is tightly full
-                if ((capReached && maxHalfDim <= 0.62f) ||
-                    nextPieces.size + remainingSrc >= maxPieces + 3 ||
-                    maxHalfDim < 0.11f
-                ) {
+                val glassCut = fractureStyle == FractureStyle.SHATTER_TRIANGLE
+                val tooSmall = if (glassCut) maxHalfDim <= 0.26f else maxHalfDim < 0.11f
+                val hardCap = nextPieces.size + remainingSrc >= maxPieces + 3
+                val keepLarge = !glassCut && capReached && maxHalfDim <= 0.62f
+                if (tooSmall || hardCap || keepLarge) {
                     nextPieces.add(offset to piece)
                     continue
                 }
@@ -380,9 +385,13 @@ object VoronoiPolyhedron {
                 }
             }
             FractureStyle.SHATTER_TRIANGLE -> {
-                // Radial cracks restricted to the 2 broad pane axes -> thin flat triangular/wedge glass shards
-                val angle = (cutIdx * 1.18f) + (rng.nextFloat() - 0.5f) * 0.72f
-                radialPlanarNormal(thinAxis = minAxis, angle = angle)
+                val long = max(he.x, max(he.y, he.z))
+                if (long > 0.26f) {
+                    axisPerturbedNormal(maxAxis, 0.16f, rng)
+                } else {
+                    val angle = (cutIdx * 1.18f) + (rng.nextFloat() - 0.5f) * 0.72f
+                    radialPlanarNormal(thinAxis = minAxis, angle = angle)
+                }
             }
             FractureStyle.TEAR_SHEET -> {
                 // Preserve thin sheet axis while shearing corrugated metal / plastic strips
@@ -411,14 +420,17 @@ object VoronoiPolyhedron {
             }
         }
 
-        val spreadScale = when (style) {
-            FractureStyle.SHATTER_TRIANGLE -> max(he.x, max(he.y, he.z)) * 0.16f
-            FractureStyle.SPLINTER_PLANK -> max(0.08f, minHalfDim) * 0.55f
+        val longSide = max(he.x, max(he.y, he.z))
+        val spreadScale = when {
+            style == FractureStyle.SHATTER_TRIANGLE && longSide > 0.26f -> longSide * 0.04f
+            style == FractureStyle.SHATTER_TRIANGLE -> longSide * 0.16f
+            style == FractureStyle.SPLINTER_PLANK -> max(0.08f, minHalfDim) * 0.55f
             else -> max(0.08f, minHalfDim) * 0.38f
         }
         val jitter = (rng.nextFloat() - 0.5f) * 2f * spreadScale
 
         val impactBias = when {
+            style == FractureStyle.SHATTER_TRIANGLE && longSide > 0.26f -> 0f
             style == FractureStyle.SHATTER_TRIANGLE && cutIdx <= 1 -> 0.52f
             cutIdx == 0 -> 0.38f
             else -> 0.08f

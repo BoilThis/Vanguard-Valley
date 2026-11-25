@@ -1556,6 +1556,42 @@ class PhysicsAndWorldTest {
         assertTrue("Tilted glass should fall off instead of staying parked", pane == null || pane.center.y < startY - 1.5f)
     }
 
+    @Test
+    fun fallingGlassPaneDoesNotStayASheet() {
+        val terrain = ChunkedTerrain(WorldConfig(seed = 11))
+        val world = StructuralWorld()
+        val x = 18f
+        val z = 6f
+        val gy = terrain.groundSurfaceY(x, z)
+        val id = world.addBlock(
+            poly = VoronoiPolyhedron.createBox(1.7f, 1.15f, 0.03f),
+            center = Vec3(x, gy + 6f, z),
+            tileId = MaterialTile.GLASS,
+            hp = 20f
+        )
+        world.applyExplosionDetailed(
+            Vec3(x, gy + 6f, z + 0.4f),
+            radius = 3.5f,
+            damage = 500f,
+            impulseStrength = 14f,
+            terrain = terrain
+        )
+        assertTrue("The pane should be gone", world.blocks[id] == null)
+        val born = world.shards.filter { it.tileId == MaterialTile.GLASS }
+        assertTrue("A pane should become a scatter of chips, got ${born.size}", born.size >= 8)
+        assertTrue(
+            "Only a couple of chips should be real physics bodies, got ${born.count { !it.ballistic }}",
+            born.count { !it.ballistic } <= 2
+        )
+        repeat(12) { world.stepShards(0.03f, terrain) }
+        val glass = world.shards.filter { it.tileId == MaterialTile.GLASS }
+        val big = glass.count { shard ->
+            val he = shard.poly.halfExtents
+            2f * maxOf(he.x, he.y, he.z) > 0.62f
+        }
+        assertTrue("Glass should be hand sized after it breaks, $big pieces still large", big == 0)
+    }
+
     private fun assertFalseContains(keys: Set<Int>, id: Int) {
         assertTrue("Expected block $id to be detached/removed", !keys.contains(id))
     }

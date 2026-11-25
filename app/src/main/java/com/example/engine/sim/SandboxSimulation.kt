@@ -560,7 +560,7 @@ class SandboxSimulation(initialConfig: WorldConfig = WorldConfig()) {
         when (result.soundKind) {
             MaterialSoundKind.GLASS -> {
                 emitSound(SoundCue.GLASS_SHATTER, dist, 0.9f)
-                spawnMaterialChips(result.hitPoint, Vec3(0.75f, 0.92f, 1.0f), if (result.blockBroken) 14 else 6)
+                spawnGlassGlints(result.hitPoint, if (result.blockBroken) 10 else 6)
             }
             MaterialSoundKind.PLASTIC -> {
                 emitSound(SoundCue.PLASTIC_SNAP, dist, 0.85f)
@@ -660,7 +660,8 @@ class SandboxSimulation(initialConfig: WorldConfig = WorldConfig()) {
             val maxDustEvents = min(3, collapseEvents.size)
             for (ci in 0 until maxDustEvents) {
                 val ev = collapseEvents[ci]
-                spawnDustBurst(ev.pos, if (ev.isClusterBreak) 5 else 4)
+                if (ev.tileId == MaterialTile.GLASS) spawnGlassGlints(ev.pos, 8)
+                else spawnDustBurst(ev.pos, if (ev.isClusterBreak) 5 else 4)
                 if (!rumblePlayed) {
                     rumblePlayed = true
                     emitSound(SoundCue.COLLAPSE_RUMBLE, (ev.pos - camEye).len(), if (ev.isClusterBreak) 0.62f else 0.78f)
@@ -1257,6 +1258,23 @@ class SandboxSimulation(initialConfig: WorldConfig = WorldConfig()) {
                 gravity = -0.35f,
                 kind = ParticleKind.DUST,
                 growthRate = 0.95f
+            )
+        }
+    }
+
+    private fun spawnGlassGlints(pos: Vec3, count: Int) {
+        repeat(count) {
+            val dir = Vec3(rng.nextFloat() - 0.5f, rng.nextFloat() * 0.85f + 0.1f, rng.nextFloat() - 0.5f).normalized()
+            spawnParticle(
+                pos = pos,
+                vel = dir * (5.5f + rng.nextFloat() * 6.5f),
+                color = Vec3(0.94f, 0.98f, 1.0f),
+                alpha = 0.92f,
+                size = 0.10f + rng.nextFloat() * 0.08f,
+                maxAge = 0.28f + rng.nextFloat() * 0.18f,
+                gravity = -8f,
+                kind = ParticleKind.SPARK,
+                growthRate = 0.02f
             )
         }
     }

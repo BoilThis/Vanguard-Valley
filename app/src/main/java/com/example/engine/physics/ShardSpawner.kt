@@ -39,6 +39,11 @@ internal fun StructuralWorld.shatterRoom(): Int =
         (StructuralWorld.SHATTER_CEILING - awakeShardCount() - reservedFractures).coerceAtLeast(0)
 
 internal fun StructuralWorld.clampShardPieces(block: StructuralBlock, isPrecision: Boolean): Int {
+        if (block.tileId == MaterialTile.GLASS) {
+            val he = block.poly.halfExtents
+            val longest = 2f * max(he.x, max(he.y, he.z))
+            return if (isPrecision) 8 else if (longest > 1.2f) 16 else 12
+        }
         val profile = MaterialProfiles.forTile(block.tileId)
         val ext = block.poly.halfExtents.len()
         val basePieces = if (ext > 1.6f) max(profile.shardPieces, 14) else (profile.shardPieces - 1).coerceAtLeast(8)
@@ -67,6 +72,11 @@ internal fun StructuralWorld.estimateShardMass(poly: ConvexPolyhedron, tileId: I
             else -> 0.48f
         }
         return (vol * density).coerceIn(0.18f, 60f)
+    }
+
+internal fun pieceLongestSide(poly: ConvexPolyhedron): Float {
+        val he = poly.halfExtents
+        return 2f * max(he.x, max(he.y, he.z))
     }
 
 internal fun StructuralWorld.computeCompoundInertiaLocal(pieces: List<ClusterPiece>): Vec3 {
@@ -119,6 +129,14 @@ internal fun StructuralWorld.detachWholeAsFallingShard(block: StructuralBlock, l
             val dSq = dx * dx + dz * dz
             if (dSq > 0.04f) Vec3(dx, 0f, dz).normalized() else Vec3.ZERO
         } else Vec3.ZERO
+
+        if (block.tileId == MaterialTile.GLASS) {
+            val longest = 2f * maxDim
+            val pieces = if (longest > 1.2f) 16 else 12
+            val lean = if (leanDir.lenSq() > 1e-4f) (leanDir + Vec3(0f, -0.35f, 0f)).normalized() else Vec3(0f, -1f, 0f)
+            spawnShatteredShards(block, block.center, lean, 4.2f, pieces)
+            return
+        }
 
         // Large slabs, roofs, walls & girders detach as Chaos-style Clustered Compound Shards
         // holding 2-3 pre-fractured sub-meter Voronoi pieces bonded by breakable strain thresholds.
@@ -588,10 +606,18 @@ internal fun StructuralWorld.spawnShatteredShards(
             fractureStyle = profile.fractureStyle
         )
         var heavyFromThisBlock = 0
+        val glassPane = block.tileId == MaterialTile.GLASS
         for ((offset, piecePoly) in split) {
-            val wantsHeavy = piecePoly.boundRadius >= 0.70f &&
-                heavyFromThisBlock < 2 &&
-                awakeShardCount() < StructuralWorld.MAX_ACTIVE_SHARDS
+            val side = pieceLongestSide(piecePoly)
+            val wantsHeavy = if (glassPane) {
+                side in 0.18f..0.55f &&
+                    heavyFromThisBlock < 2 &&
+                    awakeShardCount() < StructuralWorld.MAX_ACTIVE_SHARDS
+            } else {
+                piecePoly.boundRadius >= 0.70f &&
+                    heavyFromThisBlock < 2 &&
+                    awakeShardCount() < StructuralWorld.MAX_ACTIVE_SHARDS
+            }
             if (!wantsHeavy && ballisticRoom() <= 0) continue
             trimShardPoolIfNeeded(incomingSizeHint = piecePoly.boundRadius)
             val worldCenter = block.center + block.orientation.rotate(offset)
@@ -631,7 +657,7 @@ internal fun StructuralWorld.spawnShatteredShards(
                         (rng.nextFloat() - 0.5f) * 7.6f,
                         (rng.nextFloat() - 0.5f) * 7.6f
                     ),
-                    canSecondarySplit = piecePoly.boundRadius > 0.58f,
+                    canSecondarySplit = if (glassPane) side > 0.52f else piecePoly.boundRadius > 0.58f,
                     restitution = profile.restitution,
                     drag = profile.drag,
                     massEstimate = mass,
