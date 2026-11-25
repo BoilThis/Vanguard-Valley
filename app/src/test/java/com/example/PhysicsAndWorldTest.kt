@@ -1036,8 +1036,8 @@ class PhysicsAndWorldTest {
 
         repeat(20) { world.stepShards(0.016f, terrain) }
         assertTrue(
-            "Heavy slab falling onto glass shard must crush & shatter it into smaller shards",
-            !world.shards.contains(lightGlass) && world.shards.size > 2
+            "Heavy slab falling onto glass must powder it instead of leaving plates",
+            !world.shards.contains(lightGlass) && world.shards.none { it.tileId == MaterialTile.GLASS }
         )
 
         // 3. Large falling slab undergoes sub-meter two-stage shatter on collapse & ground impact
@@ -1577,19 +1577,10 @@ class PhysicsAndWorldTest {
             terrain = terrain
         )
         assertTrue("The pane should be gone", world.blocks[id] == null)
-        val born = world.shards.filter { it.tileId == MaterialTile.GLASS }
-        assertTrue("A pane should become a scatter of chips, got ${born.size}", born.size >= 8)
         assertTrue(
-            "Only a couple of chips should be real physics bodies, got ${born.count { !it.ballistic }}",
-            born.count { !it.ballistic } <= 2
+            "Glass should explode away instead of leaving shards",
+            world.shards.none { it.tileId == MaterialTile.GLASS }
         )
-        repeat(12) { world.stepShards(0.03f, terrain) }
-        val glass = world.shards.filter { it.tileId == MaterialTile.GLASS }
-        val big = glass.count { shard ->
-            val he = shard.poly.halfExtents
-            2f * maxOf(he.x, he.y, he.z) > 0.62f
-        }
-        assertTrue("Glass should be hand sized after it breaks, $big pieces still large", big == 0)
     }
 
     private fun assertFalseContains(keys: Set<Int>, id: Int) {

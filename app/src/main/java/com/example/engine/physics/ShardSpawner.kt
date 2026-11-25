@@ -131,10 +131,7 @@ internal fun StructuralWorld.detachWholeAsFallingShard(block: StructuralBlock, l
         } else Vec3.ZERO
 
         if (block.tileId == MaterialTile.GLASS) {
-            val longest = 2f * maxDim
-            val pieces = if (longest > 1.2f) 16 else 12
-            val lean = if (leanDir.lenSq() > 1e-4f) (leanDir + Vec3(0f, -0.35f, 0f)).normalized() else Vec3(0f, -1f, 0f)
-            spawnShatteredShards(block, block.center, lean, 4.2f, pieces)
+            collapseFailureEvents.add(CollapseFailureEvent(block.center, block.tileId, isClusterBreak = false))
             return
         }
 
@@ -596,6 +593,10 @@ internal fun StructuralWorld.spawnShatteredShards(
         pieces: Int
     ) {
         if (pieces <= 0) return
+        if (block.tileId == MaterialTile.GLASS) {
+            collapseFailureEvents.add(CollapseFailureEvent(block.center, block.tileId, isClusterBreak = false))
+            return
+        }
         val profile = MaterialProfiles.forTile(block.tileId)
         val localImpact = block.orientation.conjugate().rotate(impactWorld - block.center)
         val split = VoronoiPolyhedron.shatter(

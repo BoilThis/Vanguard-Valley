@@ -232,6 +232,12 @@ internal fun StructuralWorld.queueSecondarySplit(
         toRemove: ArrayList<DynamicShard>,
         secondarySplits: ArrayList<DynamicShard>
     ): Boolean {
+        if (shard.tileId == MaterialTile.GLASS) {
+            if (!splitIds.add(shard.id)) return false
+            toRemove.add(shard)
+            collapseFailureEvents.add(CollapseFailureEvent(shard.center, shard.tileId, isClusterBreak = false))
+            return true
+        }
         if (shard.clusterPieces != null) {
             return releaseClusterPieces(shard, splitIds, toRemove, secondarySplits)
         }
@@ -298,40 +304,27 @@ internal fun StructuralWorld.queueSecondarySplit(
         return true
     }
 
-    /** A glass piece longer than about half a meter gets one more break, then it is done. */
+    /** Loose glass panes become a dust puff. Boxes of glass never read as broken glass. */
 internal fun StructuralWorld.breakOversizedGlass() {
-        val due = ArrayList<DynamicShard>(4)
+        val due = ArrayList<DynamicShard>(8)
         for (i in shards.indices) {
             val shard = shards[i]
-            if (shard.tileId != MaterialTile.GLASS || shard.clusterPieces != null) continue
-            if (shard.splitDepth >= 1 || !shard.canSecondarySplit || shard.age < 0.06f) continue
-            if (pieceLongestSide(shard.poly) <= 0.52f) continue
+            if (shard.tileId != MaterialTile.GLASS) continue
             due.add(shard)
-            if (due.size >= 4) break
+            if (due.size >= 8) break
         }
         if (due.isEmpty()) return
-        val spawned = ArrayList<DynamicShard>()
-        val remove = ArrayList<DynamicShard>()
-        val ids = HashSet<Int>()
+        var anySleeping = false
+        val rmIds = ArrayList<Int>(due.size)
         for (i in due.indices) {
-            queueSecondarySplit(due[i], Vec3.ZERO, 8, ids, remove, spawned)
+            val shard = due[i]
+            if (shard.sleeping) anySleeping = true
+            rmIds.add(shard.id)
+            collapseFailureEvents.add(CollapseFailureEvent(shard.center, shard.tileId, isClusterBreak = false))
         }
-        if (remove.isNotEmpty()) {
-            val rmIds = ArrayList<Int>(remove.size)
-            var anySleeping = false
-            for (s in remove) {
-                if (s.sleeping) anySleeping = true
-                rmIds.add(s.id)
-            }
-            if (anySleeping) sleepingRubbleVersion++
-            shards.removeAll(remove.toSet())
-            wakeDependentsOfShards(rmIds)
-        }
-        for (i in spawned.indices) {
-            trimShardPoolIfNeeded(incomingSizeHint = spawned[i].boundRadius)
-            shards.add(spawned[i])
-        }
-        reservedFractures = 0
+        if (anySleeping) sleepingRubbleVersion++
+        shards.removeAll(due.toSet())
+        wakeDependentsOfShards(rmIds)
     }
 
     /**

@@ -560,7 +560,7 @@ class SandboxSimulation(initialConfig: WorldConfig = WorldConfig()) {
         when (result.soundKind) {
             MaterialSoundKind.GLASS -> {
                 emitSound(SoundCue.GLASS_SHATTER, dist, 0.9f)
-                spawnGlassGlints(result.hitPoint, if (result.blockBroken) 10 else 6)
+                spawnGlassDust(result.hitPoint)
             }
             MaterialSoundKind.PLASTIC -> {
                 emitSound(SoundCue.PLASTIC_SNAP, dist, 0.85f)
@@ -657,14 +657,23 @@ class SandboxSimulation(initialConfig: WorldConfig = WorldConfig()) {
         if (collapseEvents.isNotEmpty()) {
             val camEye = getCameraEye()
             var rumblePlayed = false
-            val maxDustEvents = min(3, collapseEvents.size)
-            for (ci in 0 until maxDustEvents) {
+            var glassShown = 0
+            var otherShown = 0
+            for (ci in collapseEvents.indices) {
                 val ev = collapseEvents[ci]
-                if (ev.tileId == MaterialTile.GLASS) spawnGlassGlints(ev.pos, 8)
-                else spawnDustBurst(ev.pos, if (ev.isClusterBreak) 5 else 4)
-                if (!rumblePlayed) {
-                    rumblePlayed = true
-                    emitSound(SoundCue.COLLAPSE_RUMBLE, (ev.pos - camEye).len(), if (ev.isClusterBreak) 0.62f else 0.78f)
+                if (ev.tileId == MaterialTile.GLASS) {
+                    if (glassShown >= 6) continue
+                    glassShown++
+                    spawnGlassDust(ev.pos)
+                    if (glassShown == 1) emitSound(SoundCue.GLASS_SHATTER, (ev.pos - camEye).len(), 0.7f)
+                } else {
+                    if (otherShown >= 3) continue
+                    otherShown++
+                    spawnDustBurst(ev.pos, if (ev.isClusterBreak) 5 else 4)
+                    if (!rumblePlayed) {
+                        rumblePlayed = true
+                        emitSound(SoundCue.COLLAPSE_RUMBLE, (ev.pos - camEye).len(), if (ev.isClusterBreak) 0.62f else 0.78f)
+                    }
                 }
             }
         }
@@ -1262,19 +1271,33 @@ class SandboxSimulation(initialConfig: WorldConfig = WorldConfig()) {
         }
     }
 
-    private fun spawnGlassGlints(pos: Vec3, count: Int) {
-        repeat(count) {
-            val dir = Vec3(rng.nextFloat() - 0.5f, rng.nextFloat() * 0.85f + 0.1f, rng.nextFloat() - 0.5f).normalized()
+    private fun spawnGlassDust(pos: Vec3) {
+        repeat(8) {
+            val dir = Vec3(rng.nextFloat() - 0.5f, rng.nextFloat() * 0.7f + 0.15f, rng.nextFloat() - 0.5f).normalized()
             spawnParticle(
                 pos = pos,
-                vel = dir * (5.5f + rng.nextFloat() * 6.5f),
-                color = Vec3(0.94f, 0.98f, 1.0f),
-                alpha = 0.92f,
-                size = 0.10f + rng.nextFloat() * 0.08f,
-                maxAge = 0.28f + rng.nextFloat() * 0.18f,
-                gravity = -8f,
+                vel = dir * (3.5f + rng.nextFloat() * 5f),
+                color = Vec3(0.93f, 0.97f, 1.0f),
+                alpha = 0.9f,
+                size = 0.08f + rng.nextFloat() * 0.06f,
+                maxAge = 0.32f + rng.nextFloat() * 0.16f,
+                gravity = -6f,
                 kind = ParticleKind.SPARK,
                 growthRate = 0.02f
+            )
+        }
+        repeat(4) {
+            val dir = Vec3(rng.nextFloat() - 0.5f, rng.nextFloat() * 0.45f + 0.15f, rng.nextFloat() - 0.5f).normalized()
+            spawnParticle(
+                pos = pos,
+                vel = dir * (1.2f + rng.nextFloat() * 1.4f),
+                color = Vec3(0.78f, 0.88f, 0.96f),
+                alpha = 0.32f,
+                size = 0.45f + rng.nextFloat() * 0.35f,
+                maxAge = 0.55f + rng.nextFloat() * 0.25f,
+                gravity = -0.25f,
+                kind = ParticleKind.DUST,
+                growthRate = 0.55f
             )
         }
     }
