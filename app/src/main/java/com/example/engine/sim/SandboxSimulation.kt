@@ -1,6 +1,7 @@
 package com.example.engine.sim
 
 import com.example.audio.SoundCue
+import com.example.engine.physics.DynamicShard
 import com.example.engine.physics.FloatArrayBuilder
 import com.example.engine.physics.MeshRing
 import com.example.engine.physics.StructuralWorld
@@ -59,6 +60,9 @@ private data class QueuedBlast(
 private enum class ParticleKind {
     SMOKE, FIREBALL, SPARK, DUST, SPLASH, TRACER
 }
+
+private const val MAX_DEBRIS_PLUMES = 6
+private const val PLUME_TILE = 4f
 
 private data class Particle(
     var pos: Vec3,
@@ -160,6 +164,7 @@ class SandboxSimulation(initialConfig: WorldConfig = WorldConfig()) {
 
     val activeFireSiteCount: Int get() = fireSites.size
     val activeParticleCount: Int get() = particles.size
+    val activePlumeCount: Int get() = debrisPlumes.count { it.active }
 
     private var fireCooldown = 0f
     private var waterTime = 0f
@@ -201,7 +206,9 @@ class SandboxSimulation(initialConfig: WorldConfig = WorldConfig()) {
     private val sleepingRubbleBuilder = FloatArrayBuilder(65536)
     private val dynamicBuilder = FloatArrayBuilder(65536)
     private val shockwaveBuilder = FloatArrayBuilder(8192)
-    private val particleBuilder = FloatArrayBuilder(32768)
+    private val particleBuilder = FloatArrayBuilder(65536)
+    private val plumeSphere = buildPlumeSphere()
+    private val debrisPlumes = Array(MAX_DEBRIS_PLUMES) { DebrisPlume() }
     private val lineBuilder = FloatArrayBuilder(4096)
     private val dynamicRing = MeshRing()
     private val shockwaveRing = MeshRing()
@@ -661,6 +668,7 @@ class SandboxSimulation(initialConfig: WorldConfig = WorldConfig()) {
                 }
             }
         }
+        stepDebrisPlumes(dt)
 
         stepParticles(dt)
         refreshCachesAndSnapshot()
@@ -1658,6 +1666,7 @@ class SandboxSimulation(initialConfig: WorldConfig = WorldConfig()) {
                 emitParticleQuad(pt, camRight, camUp, nearFade, particleBuilder)
             }
         }
+        emitDebrisPlumes(particleBuilder)
 
         lineBuilder.reset()
         if (interactionTool == InteractionTool.BUILD_BRUSH) {
@@ -1887,6 +1896,198 @@ class SandboxSimulation(initialConfig: WorldConfig = WorldConfig()) {
         }
     }
 
+    private class DebrisPlume {
+        var shardId: Int = -1
+        var active: Boolean = false
+        var grounded: Boolean = false
+        var age: Float = 0f
+        var groundAge: Float = 0f
+        var sampleAcc: Float = 0f
+        var radius: Float = 1.6f
+        var trailN: Int = 0
+        var trailWrite: Int = 0
+        var head: Vec3 = Vec3.ZERO
+        var groundPos: Vec3 = Vec3.ZERO
+        val trail = Array(3) { Vec3.ZERO }
+
+        fun arm(shard: DynamicShard) {
+            shardId = shard.id
+            active = true
+            grounded = false
+            age = 0f
+            groundAge = 0f
+            sampleAcc = 0f
+            trailN = 0
+            trailWrite = 0
+            head = shard.center
+            radius = max(1.55f, shard.boundRadius * 1.65f)
+        }
+    }
+
+    private fun plumeCandidate(shard: DynamicShard): Boolean {
+        if (shard.sleeping || shard.age < 0.02f || shard.age > 6f) return false
+        return shard.clusterPieces != null || shard.boundRadius >= 0.85f
+    }
+
+    private fun findPlumeShard(id: Int): DynamicShard? {
+        val shards = world.shards
+        for (i in shards.indices) if (shards[i].id == id) return shards[i]
+        return null
+    }
+
+    private fun settlePlume(plume: DebrisPlume, at: Vec3) {
+        if (!plume.grounded) {
+            plume.grounded = true
+            plume.groundPos = at
+            plume.groundAge = 0f
+        }
+    }
+
+    private fun stepDebrisPlumes(dt: Float) {
+        val shards = world.shards
+        for (pi in debrisPlumes.indices) {
+            val plume = debrisPlumes[pi]
+            if (!plume.active) continue
+            val shard = findPlumeShard(plume.shardId)
+            if (shard == null) {
+                settlePlume(plume, plume.head)
+            } else if (!plume.grounded) {
+                val ground = terrain.groundSurfaceY(shard.center.x, shard.center.z)
+                val foot = min(shard.boundRadius, shard.poly.halfExtents.y + 0.08f)
+                plume.head = shard.center
+                plume.radius = max(1.55f, shard.boundRadius * 1.65f)
+                if (shard.sleeping || shard.center.y - foot <= ground + 0.22f) {
+                    settlePlume(plume, Vec3(shard.center.x, ground + 0.45f, shard.center.z))
+                } else {
+                    plume.age += dt
+                    plume.sampleAcc += dt
+                    if (plume.sampleAcc >= 0.12f) {
+                        plume.sampleAcc = 0f
+                        plume.trail[plume.trailWrite] = shard.center
+                        plume.trailWrite = (plume.trailWrite + 1) % 3
+                        if (plume.trailN < 3) plume.trailN++
+                    }
+                }
+            }
+            if (plume.grounded) {
+                plume.groundAge += dt
+                val lift = 0.55f * dt
+                for (ti in 0 until plume.trailN) {
+                    val p = plume.trail[ti]
+                    plume.trail[ti] = Vec3(p.x, p.y + lift, p.z)
+                }
+                if (plume.groundAge > 3.1f) plume.active = false
+            }
+        }
+
+        var guard = 0
+        while (guard < MAX_DEBRIS_PLUMES) {
+            guard++
+            var free = -1
+            for (pi in debrisPlumes.indices) if (!debrisPlumes[pi].active) { free = pi; break }
+            if (free < 0) return
+            var best = -1
+            var bestR = 0.85f
+            for (i in shards.indices) {
+                val shard = shards[i]
+                if (!plumeCandidate(shard)) continue
+                var tracked = false
+                for (pi in debrisPlumes.indices) {
+                    if (debrisPlumes[pi].active && debrisPlumes[pi].shardId == shard.id) {
+                        tracked = true
+                        break
+                    }
+                }
+                if (tracked) continue
+                if (shard.boundRadius >= bestR) {
+                    bestR = shard.boundRadius
+                    best = i
+                }
+            }
+            if (best < 0) return
+            debrisPlumes[free].arm(shards[best])
+        }
+    }
+
+    private fun emitDebrisPlumes(out: FloatArrayBuilder) {
+        val dust = Vec3(0.64f, 0.58f, 0.50f)
+        val scroll = waterTime * 0.08f
+        for (pi in debrisPlumes.indices) {
+            val plume = debrisPlumes[pi]
+            if (!plume.active) continue
+            val fade = if (plume.grounded) (1f - plume.groundAge / 3.1f).coerceIn(0f, 1f) else 1f
+            if (fade < 0.04f) continue
+            if (!plume.grounded) {
+                emitPlumeSphere(
+                    plume.head + Vec3(0f, plume.radius * 0.12f, 0f),
+                    plume.radius * 0.82f,
+                    1.2f,
+                    dust,
+                    0.24f * fade,
+                    scroll,
+                    out
+                )
+                for (ti in 0 until plume.trailN) {
+                    val p = plume.trail[ti]
+                    emitPlumeSphere(
+                        p + Vec3(0f, 0.25f, 0f),
+                        plume.radius * 1.15f,
+                        1.25f,
+                        dust,
+                        0.40f * fade,
+                        scroll + ti * 0.17f,
+                        out
+                    )
+                }
+            } else {
+                emitPlumeSphere(plume.groundPos, plume.radius * 2.05f, 0.36f, dust, 0.50f * fade, scroll, out)
+                for (ti in 0 until plume.trailN) {
+                    emitPlumeSphere(
+                        plume.trail[ti],
+                        plume.radius,
+                        1.05f,
+                        dust,
+                        0.26f * fade,
+                        scroll + ti * 0.13f,
+                        out
+                    )
+                }
+            }
+        }
+    }
+
+    private fun emitPlumeSphere(
+        center: Vec3,
+        radius: Float,
+        flat: Float,
+        color: Vec3,
+        alpha: Float,
+        scroll: Float,
+        out: FloatArrayBuilder
+    ) {
+        val src = plumeSphere
+        var i = 0
+        while (i < src.size) {
+            val x = src[i]
+            val y = src[i + 1]
+            val z = src[i + 2]
+            val nx = x
+            val ny = y / flat
+            val nz = z
+            val nLen = kotlin.math.sqrt(nx * nx + ny * ny + nz * nz).coerceAtLeast(1e-4f)
+            out.emitVertex(
+                Vec3(center.x + x * radius, center.y + y * radius * flat, center.z + z * radius),
+                Vec3(nx / nLen, ny / nLen, nz / nLen),
+                color,
+                scroll,
+                scroll * 0.6f,
+                PLUME_TILE,
+                alpha
+            )
+            i += 3
+        }
+    }
+
     private fun emitParticleQuad(
         pt: Particle,
         right: Vec3,
@@ -1942,6 +2143,37 @@ class SandboxSimulation(initialConfig: WorldConfig = WorldConfig()) {
         out.emitVertex(p0, nParam, pt.color, uMin, vMin, mode, fade)
         out.emitVertex(p2, nParam, pt.color, uMax, vMax, mode, fade)
         out.emitVertex(p3, nParam, pt.color, uMin, vMax, mode, fade)
+    }
+
+    private fun buildPlumeSphere(): FloatArray {
+        val stacks = 3
+        val slices = 6
+        val out = FloatArray(stacks * slices * 6 * 3)
+        var o = 0
+        fun sph(phi: Float, th: Float): Vec3 {
+            val sp = sin(phi)
+            return Vec3(sp * cos(th), cos(phi), sp * sin(th))
+        }
+        fun put(p: Vec3) {
+            out[o++] = p.x
+            out[o++] = p.y
+            out[o++] = p.z
+        }
+        for (si in 0 until stacks) {
+            val phi0 = PI.toFloat() * si / stacks
+            val phi1 = PI.toFloat() * (si + 1) / stacks
+            for (sj in 0 until slices) {
+                val th0 = (2f * PI.toFloat()) * sj / slices
+                val th1 = (2f * PI.toFloat()) * (sj + 1) / slices
+                val a = sph(phi0, th0)
+                val b = sph(phi1, th0)
+                val c = sph(phi1, th1)
+                val d = sph(phi0, th1)
+                put(a); put(b); put(c)
+                put(a); put(c); put(d)
+            }
+        }
+        return out
     }
 
     private fun emitGroundRing(center: Vec3, radius: Float, color: Vec3, out: FloatArrayBuilder) {

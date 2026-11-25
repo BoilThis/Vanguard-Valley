@@ -557,11 +557,15 @@ object ValleyShaders {
         varying vec2 vUV;
         varying float vMode;
         varying float vWarmth;
+        varying vec3 vNormal;
+        varying vec3 vWorld;
         void main() {
             vColor = aColor;
             vUV = aUV;
             vMode = aTile;
             vWarmth = aNormal.x;
+            vNormal = aNormal;
+            vWorld = aPos;
             gl_Position = uMVP * vec4(aPos, 1.0);
         }
     """
@@ -575,17 +579,42 @@ object ValleyShaders {
 
         uniform sampler2D uParticleTex;
         uniform vec3 uSunDir;
+        uniform vec3 uCamPos;
         varying vec4 vColor;
         varying vec2 vUV;
         varying float vMode;
         varying float vWarmth;
+        varying vec3 vNormal;
+        varying vec3 vWorld;
 
         void main() {
+            float mode = floor(vMode + 0.5);
+            if (mode > 3.5) {
+                vec3 N = normalize(vNormal);
+                vec3 toCam = uCamPos - vWorld;
+                float vLen = length(toCam);
+                vec3 V = vLen > 0.001 ? toCam / vLen : vec3(0.0, 1.0, 0.0);
+                float ndv = dot(N, V);
+                if (ndv < 0.05) discard;
+                float fres = pow(clamp(ndv, 0.0, 1.0), 1.15);
+                vec2 duv = vec2(
+                    fract(vUV.x + N.x * 0.37) * 0.5,
+                    0.5 + fract(vUV.y + N.z * 0.37) * 0.5
+                );
+                float noise = texture2D(uParticleTex, duv).a;
+                float puff = fres * (0.45 + 0.55 * noise) * vColor.a;
+                if (puff < 0.02) discard;
+                float wrap = clamp(dot(N, normalize(uSunDir)) * 0.5 + 0.5, 0.0, 1.0);
+                vec3 col = mix(vColor.rgb * 0.48, vColor.rgb * 1.12, wrap);
+                col += vec3(0.16, 0.15, 0.13) * pow(1.0 - clamp(ndv, 0.0, 1.0), 2.0);
+                gl_FragColor = vec4(col, puff);
+                return;
+            }
+
             vec4 tex = texture2D(uParticleTex, vUV);
             float alpha = tex.a * vColor.a;
             if (alpha < 0.015) discard;
 
-            float mode = floor(vMode + 0.5);
             if (mode > 1.5 && mode < 2.5) {
                 // Incandescent spark / tracer core
                 vec3 col = mix(vColor.rgb, vec3(1.0, 0.98, 0.90), tex.r * 0.85);

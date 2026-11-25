@@ -1,5 +1,6 @@
 package com.example
 
+import com.example.engine.physics.DynamicShard
 import com.example.engine.physics.ManifoldScratch
 import com.example.engine.physics.StructuralWorld
 import com.example.engine.physics.VoronoiPolyhedron
@@ -1485,6 +1486,62 @@ class PhysicsAndWorldTest {
             "Woken slab should drop (y=${world.shards[0].center.y}, gy=$gy)",
             world.shards[0].center.y < gy + 10f
         )
+    }
+
+    @Test
+    fun dustPlumeFollowsAFallingSlabAndSettlesOnTheGround() {
+        val sim = SandboxSimulation(WorldConfig(seed = 3))
+        val poly = VoronoiPolyhedron.createBox(1.4f, 0.4f, 2.6f)
+        val x = 24f
+        val z = 18f
+        val ground = sim.terrain.groundSurfaceY(x, z)
+        sim.world.shards.add(
+            DynamicShard(
+                id = 88001,
+                poly = poly,
+                center = Vec3(x, ground + 14f, z),
+                orientation = Quat.IDENTITY,
+                uvOrigin = Vec3.ZERO,
+                tileId = MaterialTile.CONCRETE,
+                tint = Vec3(0.7f, 0.7f, 0.68f),
+                vel = Vec3(0.2f, -1.5f, 0f),
+                angVel = Vec3(0.4f, 0.2f, 0.1f),
+                ballistic = true,
+                massEstimate = 9f,
+                boundRadius = poly.boundRadius
+            )
+        )
+        repeat(3) { sim.step(0.05f) }
+        assertTrue("A large falling slab should grow a plume", sim.activePlumeCount >= 1)
+        val early = sim.latestSnapshot.particleVerts
+        assertTrue("Plume spheres should be in the particle mesh", countPlumeVerts(early) > 20)
+        var high = false
+        var i = 1
+        while (i < early.size) {
+            if (early[i + 11] > 3.5f && early[i] > ground + 6f) high = true
+            i += 13
+        }
+        assertTrue("The plume should still be up with the slab", high)
+
+        repeat(90) { sim.step(0.03f) }
+        val late = sim.latestSnapshot.particleVerts
+        var nearGround = false
+        var j = 1
+        while (j < late.size) {
+            if (late[j + 11] > 3.5f && late[j] < ground + 2.2f) nearGround = true
+            j += 13
+        }
+        assertTrue("The plume should flatten onto the ground after the slab lands", nearGround || sim.activePlumeCount == 0)
+    }
+
+    private fun countPlumeVerts(verts: FloatArray): Int {
+        var n = 0
+        var i = 12
+        while (i < verts.size) {
+            if (verts[i] > 3.5f) n++
+            i += 13
+        }
+        return n
     }
 
     private fun assertFalseContains(keys: Set<Int>, id: Int) {

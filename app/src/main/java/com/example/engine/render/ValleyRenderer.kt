@@ -101,6 +101,7 @@ class ValleyRenderer(
     private class ParticleHandles(prog: Int) {
         val uMVP = GLES20.glGetUniformLocation(prog, "uMVP")
         val uSunDir = GLES20.glGetUniformLocation(prog, "uSunDir")
+        val uCamPos = GLES20.glGetUniformLocation(prog, "uCamPos")
         val uParticleTex = GLES20.glGetUniformLocation(prog, "uParticleTex")
         val aPos = GLES20.glGetAttribLocation(prog, "aPos")
         val aNormal = GLES20.glGetAttribLocation(prog, "aNormal")
@@ -581,6 +582,7 @@ class ValleyRenderer(
             GLES20.glUseProgram(particleProg)
             GLES20.glUniformMatrix4fv(particleH.uMVP, 1, false, vpMatrix, 0)
             GLES20.glUniform3f(particleH.uSunDir, sunDir.x, sunDir.y, sunDir.z)
+            GLES20.glUniform3f(particleH.uCamPos, eye.x, eye.y, eye.z)
             GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
             GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, particleTexId)
             GLES20.glUniform1i(particleH.uParticleTex, 0)
