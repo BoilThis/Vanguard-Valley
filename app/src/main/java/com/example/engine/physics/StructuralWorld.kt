@@ -830,6 +830,7 @@ class StructuralWorld {
             }
         }
         stepBallisticShards(dt, terrain)
+        slidePerchedGlass(terrain)
         shedAwakeOverflow(terrain)
         releaseFloatingSleepers(terrain)
         retireSettledChips(dt)

@@ -120,6 +120,34 @@ internal fun StructuralWorld.shedAwakeOverflow(terrain: ChunkedTerrain) {
         if (dropped.isNotEmpty()) wakeDependentsOfShards(dropped)
     }
 
+    /** Tilted glass on a ledge should slide off, not freeze against the floor. */
+internal fun StructuralWorld.slidePerchedGlass(terrain: ChunkedTerrain) {
+        for (i in shards.indices) {
+            val shard = shards[i]
+            if (shard.tileId != MaterialTile.GLASS || shard.clusterPieces != null) continue
+            if (!shard.sleeping && shard.vel.lenSq() > 3.5f) continue
+            val ground = terrain.groundSurfaceY(shard.center.x, shard.center.z)
+            if (shard.center.y - shard.poly.halfExtents.y < ground + 1.1f) continue
+            val he = shard.poly.halfExtents
+            val thin = when {
+                he.y <= he.x && he.y <= he.z -> Vec3(0f, 1f, 0f)
+                he.x <= he.z -> Vec3(1f, 0f, 0f)
+                else -> Vec3(0f, 0f, 1f)
+            }
+            val worldThin = shard.orientation.rotate(thin)
+            if (abs(worldThin.y) > 0.78f) continue
+            val slideX = if (abs(worldThin.x) + abs(worldThin.z) > 0.2f) worldThin.x else 0.7f
+            val slideZ = if (abs(worldThin.x) + abs(worldThin.z) > 0.2f) worldThin.z else 0.4f
+            shard.sleeping = false
+            shard.isGroundedContact = false
+            shard.supportedByBlockId = null
+            if (shard.vel.y > -0.6f) {
+                shard.vel = Vec3(slideX * 1.8f, -2.6f, slideZ * 1.8f)
+                shard.angVel = Vec3(worldThin.z * 1.4f, 0.25f, -worldThin.x * 1.4f)
+            }
+        }
+    }
+
     /** Chips drawn and tumbled, but not given a rigid-body in the solver. */
 internal fun StructuralWorld.stepBallisticShards(dt: Float, terrain: ChunkedTerrain) {
         val damp = (1f - 1.4f * dt).coerceIn(0.84f, 0.99f)
@@ -150,8 +178,17 @@ internal fun StructuralWorld.stepBallisticShards(dt: Float, terrain: ChunkedTerr
                 if (penX <= 0f || penY <= 0f || penZ <= 0f) continue
                 if (penY <= penX && penY <= penZ) {
                     val sign = if (dy >= 0f) 1f else -1f
-                    shard.center = Vec3(shard.center.x, block.center.y + sign * (he.y + pad), shard.center.z)
-                    if (shard.vel.y * sign < 0f) shard.vel = Vec3(shard.vel.x * 0.55f, 0f, shard.vel.z * 0.55f)
+                    val highGlass = shard.tileId == MaterialTile.GLASS && sign > 0f &&
+                        shard.center.y > terrain.groundSurfaceY(shard.center.x, shard.center.z) + 1.4f
+                    if (highGlass) {
+                        val away = Vec3(dx, 0f, dz)
+                        val push = if (away.lenSq() > 0.05f) away.normalized() else Vec3(1f, 0f, 0f)
+                        shard.center = Vec3(shard.center.x, block.center.y + he.y + pad + 0.02f, shard.center.z)
+                        shard.vel = Vec3(push.x * 2.4f, -1.4f, push.z * 2.4f)
+                    } else {
+                        shard.center = Vec3(shard.center.x, block.center.y + sign * (he.y + pad), shard.center.z)
+                        if (shard.vel.y * sign < 0f) shard.vel = Vec3(shard.vel.x * 0.55f, 0f, shard.vel.z * 0.55f)
+                    }
                 } else if (penX <= penZ) {
                     val sign = if (dx >= 0f) 1f else -1f
                     shard.center = Vec3(block.center.x + sign * (he.x + pad), shard.center.y, shard.center.z)

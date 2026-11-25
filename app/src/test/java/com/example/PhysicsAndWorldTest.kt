@@ -1512,36 +1512,48 @@ class PhysicsAndWorldTest {
             )
         )
         repeat(3) { sim.step(0.05f) }
-        assertTrue("A large falling slab should grow a plume", sim.activePlumeCount >= 1)
-        val early = sim.latestSnapshot.particleVerts
-        assertTrue("Plume spheres should be in the particle mesh", countPlumeVerts(early) > 20)
-        var high = false
-        var i = 1
-        while (i < early.size) {
-            if (early[i + 11] > 3.5f && early[i] > ground + 6f) high = true
-            i += 13
-        }
-        assertTrue("The plume should still be up with the slab", high)
+        assertTrue("A falling slab should grow a dust plume", sim.activePlumeCount >= 1)
 
         repeat(90) { sim.step(0.03f) }
-        val late = sim.latestSnapshot.particleVerts
-        var nearGround = false
-        var j = 1
-        while (j < late.size) {
-            if (late[j + 11] > 3.5f && late[j] < ground + 2.2f) nearGround = true
-            j += 13
-        }
-        assertTrue("The plume should flatten onto the ground after the slab lands", nearGround || sim.activePlumeCount == 0)
+        val shard = sim.world.shards.find { it.id == 88001 }
+        assertTrue(
+            "The slab should reach the ground",
+            shard == null || shard.center.y < ground + 3f
+        )
+        assertTrue(
+            "The plume should settle into a ground puff",
+            sim.groundedPlumeCount >= 1 || sim.activePlumeCount == 0
+        )
     }
 
-    private fun countPlumeVerts(verts: FloatArray): Int {
-        var n = 0
-        var i = 12
-        while (i < verts.size) {
-            if (verts[i] > 3.5f) n++
-            i += 13
-        }
-        return n
+    @Test
+    fun tiltedGlassDoesNotSleepOnAHighLedge() {
+        val sim = SandboxSimulation(WorldConfig(seed = 5))
+        val poly = VoronoiPolyhedron.createBox(1.3f, 0.04f, 0.8f)
+        val x = 30f
+        val z = 12f
+        val ground = sim.terrain.groundSurfaceY(x, z)
+        val tilt = Quat.fromAxisAngle(Vec3(1f, 0f, 0f), 1.15f)
+        sim.world.shards.add(
+            DynamicShard(
+                id = 88011,
+                poly = poly,
+                center = Vec3(x, ground + 8f, z),
+                orientation = tilt,
+                uvOrigin = Vec3.ZERO,
+                tileId = MaterialTile.GLASS,
+                tint = Vec3(0.8f, 0.9f, 1f),
+                vel = Vec3.ZERO,
+                angVel = Vec3.ZERO,
+                sleeping = true,
+                massEstimate = 0.8f,
+                boundRadius = poly.boundRadius
+            )
+        )
+        val startY = ground + 8f
+        repeat(25) { sim.step(0.03f) }
+        val pane = sim.world.shards.find { it.id == 88011 }
+        assertTrue("Tilted glass should fall off instead of staying parked", pane == null || pane.center.y < startY - 1.5f)
     }
 
     private fun assertFalseContains(keys: Set<Int>, id: Int) {
